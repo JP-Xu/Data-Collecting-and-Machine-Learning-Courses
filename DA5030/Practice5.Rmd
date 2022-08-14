@@ -1,0 +1,159 @@
+---
+title: "Practice 5"
+author: "Jiaming Xu"
+output:
+  html_document:
+    df_print: paged
+---
+
+Load package and datasets:
+
+```{r, results='hide'}
+library(C50)
+library(tidyverse)
+credit <- read_csv("credit.csv")
+```
+
+replace 1 with no, 2 with yes in default column
+
+```{r}
+credit$default <- str_replace_all(credit$default, c("1" = "no", "2" = "yes"))
+```
+
+
+check if the dataset loaded properly.
+
+```{r}
+str(credit)
+```
+
+Checking and saving amount are two main consideration during a loan pre-approval. Use table function to count each values of saving and checking account.
+
+```{r}
+table(credit$checking_balance)
+table(credit$savings_balance)
+```
+
+Other considerations are amount of current loan, and loan duration. If the loan amount is relatively high compared to income, or loan duration is long, bank should not consider give that person a loan. Use summary function to check the stats overlook of these two info.
+
+```{r}
+summary(credit$months_loan_duration)
+summary(credit$amount)
+```
+
+Check the default variable. 
+
+```{r}
+table(credit$default)
+```
+
+```{r, results='hide'}
+RNGversion("3.5.2")
+
+```
+
+Allocate 900 observations as train dataset randomly, the rest as test. Then check if two conditions in two datasets are close.
+
+```{r}
+set.seed(123)
+train_sample <- sample(1000, 900)
+str(train_sample)
+credit_train <- credit[train_sample, ]
+credit_test <- credit[-train_sample, ]
+prop.table(table(credit_train$default))
+prop.table(table(credit_test$default))
+```
+
+## Step 3 - training a model on the data:
+
+C5.0 is a decision tree function takes train dataset and label as x and y inputs. Optional arguments include trails (fora adaptive boost) and weights (for weighting results). Create C5.0 object for prediction:
+
+```{r}
+credit_model <- C5.0( credit_train[-17], factor(credit_train$default))
+
+```
+
+Take a look at this object. After applying decision tree relevant algorithms, 54 tree branches were applied to this train data set.
+
+```{r}
+credit_model
+```
+
+Now, take a deeper look at rich info of decision tree results:
+
+Results below are neither legible nor intuitive as a plot decision tree. However, there are many useful information. There are two root branches: checking_balance. If continue, check credit_history. If it's perfect, very good, critical, good, or poor.
+
+The fraction in the parentheses at the end of each row indicates number of examples reaching the decision and the number of incorrectly classified. For the first decision, 412/50 means there are 412 examples reaching the decision, and 50 were incorrectly classified as no.
+
+```{r}
+summary(credit_model)
+```
+
+The second trunk of summary outputs includes size of decision tree and errors.
+Errors indicates 133 out of 900 observations classified incorrect. Below this table is the detailed table just like what CrossTable shows.
+
+## Step 4 - evaluating model performance
+
+```{r}
+library(gmodels)
+credit_pred <- predict(credit_model, credit_test)
+CrossTable(credit_test$default, credit_pred,
+           prop.chisq = F, prop.c = F, prop.r = F, 
+           dnn = c('actual default', 'predicted default'))
+```
+
+## Step 5 - improving model performance using adaptive boost
+
+Maybe this function updated, adaptive boost doesn't work after I run the same scripts as textbook. But I get the basic idea.
+
+```{r}
+credit_boost10 <- C5.0(credit_train[-17], as.factor(credit_train$default), trails=10)
+credit_boost10
+credit_boost_pred19 <- predict(credit_boost10, credit_test)
+CrossTable(credit_test$default, credit_boost_pred19,
+           prop.chisq = F, prop.c = F, prop.r = F, 
+           dnn = c('actual default', 'predicted default'))
+
+```
+
+## Step 6 - Making some mistakes cost more than others
+
+```{r}
+error_cost <- matrix(c(0,1,4,0), nrow=2)
+credit_cost <- C5.0(credit_train[-17], factor(credit_train$default), costs = error_cost)
+credit_cost_pred <- predict(credit_cost, credit_test)
+CrossTable( credit_test$default, credit_cost_pred,
+            prop.chisq = F, prop.c = F, prop.r = F,
+            dnn = c("actual default", "predicted default"))
+```
+
+After this weighting process, there are less FN
+
+
+
+# COMPARISONS
+
+1. kNN. Used for numerical variables, always gives an accurate results with short wall time. Normalization is required and missing data have to be manipulated properly to get more accurate prediction.
+
+2. Naive Bayes. Used for both numerical and categorical variables. Good accuracy with longer wall time than kNN, used widely for text classification.
+
+3. Decision Tree. Requires less effort for data preparation during pre-processing, does not require normalization of data, missing values in the data also do NOT affect the process, and very intuitive.
+
+4. RIPPER algorithm is 
+
+
+# model ensemble
+
+Model ensemble is used to improve prediction accuracy of one algorithm.
+
+ - bagging, that often considers homogeneous weak learners, learns them independently from each other in parallel and combines them following some kind of deterministic averaging process
+
+ - boosting, that often considers homogeneous weak learners, learns them sequentially in a very adaptative way (a base model depends on the previous ones) and combines them following a deterministic strategy
+
+ - stacking, that often considers heterogeneous weak learners, learns them in parallel and combines them by training a meta-model to output a prediction based on the different weak models predictions
+
+
+
+
+reference:
+https://towardsdatascience.com/ensemble-methods-bagging-boosting-and-stacking-c9214a10a205

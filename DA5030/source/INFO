@@ -1,0 +1,18 @@
+Used Multilinear regression and neural nets
+
+r**2 = squarred correlation coefficient
+s = standard deviation
+n = number of compouds used in the fit
+
+r**2 (MLR) = 0.88
+s (MLR) = 0.83
+n (MLR) = 21
+
+r**2 (NN) = 0.91 
+s (NN) = 0.63
+n (NN) = 21
+
+Dataset extracted from: 
+http://www.pharmacy.arizona.edu/outreach/aquasol/
+http://www.syrres.com/esc/physprop.htm
+

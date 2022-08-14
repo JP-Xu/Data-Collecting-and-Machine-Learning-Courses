@@ -1,0 +1,402 @@
+---
+title: "DA 5020 Practicum 3"
+author: "Jiaming Xu"
+output:
+  html_document:
+    df_print: paged
+---
+
+## CRISP-DM: Business Understanding
+
+#### Loading data.
+
+```{r}
+library(tidyverse)
+library(psych)
+green_url <- "https://s3.amazonaws.com/nyc-tlc/trip+data/green_tripdata_2020-02.csv"
+trip_df <- read_csv(green_url)
+
+```
+
+#### Visualizing missing values for each variable.
+
+There are about 20% missing values in vendorID, trip_type, store_and_fwd_flag, retacodeID, payment_type, passenger_count, and congestion_surcharge. There's no value in Ehail_fee column, hence drop it.
+
+```{r}
+trip_df_missing_freq <- sapply(trip_df, function(x) {sum(is.na(x))/nrow(trip_df)})
+tibble( names = names(trip_df_missing_freq), missing_freq = trip_df_missing_freq) %>% 
+    ggplot() +
+    geom_bar( mapping = aes(x = names, y = missing_freq), stat = 'identity') +
+    coord_flip()
+```
+
+#### - Overlook of data.
+
+In total 19 columns and 1 is categorical and 2 are in date format.
+
+```{r}
+glimpse(trip_df)
+```
+
+### Sanity Check
+
+#### - RateCodeID
+
+Examine if there are abnormal values in the “RateCodeID” column, we can see there is code 99 in the column, but should be only 1 to 6 in the data dictionary. Therefore any values with code 99 should be removed or defined.
+
+```{r}
+trip_df %>% 
+    pull( RatecodeID) %>% 
+    unique()
+```
+
+#### - Outliers
+
+Number of outliers in each column is shown in the figure below. Tolls amount, total amount, tip amount, extra, and fare amount are continuous variables, which means other variables would not include any outlier in them. 
+
+For more detail, tolls amount contains 379978 zeros and 18654 non zeros. Therefore, these shouldn't be considered as outliers if we want to remove them in the future.
+
+```{r}
+
+n_outliers <- function(x){
+  sum(abs((x[!is.na(x)] - mean(x, na.rm = TRUE)) / sd(x , na.rm = TRUE)) > 3)
+}
+
+enframe(sapply(trip_df[, 5:19], n_outliers)) %>% 
+  ggplot() +
+  geom_bar( mapping = aes(x=name, y = value ), stat='identity') +
+  coord_flip() +
+  labs( x = "Number of outliers", y = "Variables", title = "Number of outliers of each variable.")
+```
+
+For total amount, there are many negative amounts which means return for passengers. There are 1152 negative values.
+
+```{r}
+trip_df %>% 
+  filter( total_amount < 0) %>% 
+  pull(total_amount) %>% 
+  length()
+```
+
+
+#### - Trip distance distribution
+
+The histogram plot shows only one visible bar with more than 30k data, therefore the data is highly skewed. This means there are several very long trip distance in this dataset. Take logarithm 10 to trip_distance for a better visualization, it looks like the normal distribution, but the x axis is actually based on log10. I also list first 20 longest trip distance in this dataset, 10 trip distances longer than 10k.
+
+```{r}
+trip_df %>% 
+    select( trip_distance) %>% 
+    drop_na() %>% 
+    ggplot() +
+        geom_histogram( mapping = aes( trip_distance))
+```
+
+Now plot distribution excluding outliers (defined as z score > 30). We can see here, the distribution is skewed to the left.
+
+```{r}
+trip_df %>% 
+    mutate( z = (trip_distance - mean(trip_distance) / sd(trip_distance))) %>%
+    filter( abs(z) < 30) %>% 
+    select( trip_distance) %>% 
+    ggplot() +
+        geom_histogram( mapping = aes( trip_distance))
+```
+
+Distribution of log plot looks like a normal distrubution. Therefore trip value could be logarized before data processing.
+
+```{r}
+trip_df %>% 
+    select( trip_distance) %>% 
+    drop_na() %>% 
+    ggplot() +
+        geom_histogram( mapping = aes( log10(trip_distance)))
+```
+
+
+
+#### Other potential factors: time in a day and day in a week.
+
+Here, I propose that the hour in a day and a day in a week could impact the amount of tips. Maybe people would pay higher tips during the weekends and midnights.
+
+```{r}
+
+trip_df_clean_time <- trip_df %>% 
+    mutate_at( vars( VendorID, RatecodeID, payment_type, trip_type), as.factor) %>% 
+    mutate( pick_up_month = format( lpep_pickup_datetime, "%Y-%b")) %>% 
+    mutate( drop_off_month = format( lpep_dropoff_datetime, "%Y-%b")) %>% 
+    filter(  !( drop_off_month != "2020-Feb" & pick_up_month != "2020-Feb")) %>% 
+    mutate( dayofweek = format(lpep_pickup_datetime, "%w")) %>% 
+    mutate( hourofday = as.numeric(format(lpep_pickup_datetime, "%H"))) %>% 
+    select( dayofweek, hourofday, tip_amount) %>% 
+    type_convert()
+
+cor(trip_df_clean_time)
+```
+
+Answer is no. There's very weak correlation between hour in a day and day in a week with the amount of tips.
+
+```{r}
+trip_df_clean_time %>% 
+    group_by(dayofweek) %>% 
+    summarise( average_tips = mean(tip_amount)) %>% 
+    ggplot( ) +
+    geom_bar( mapping = aes(x = dayofweek, y = average_tips), stat = "identity") +
+    labs( title = "average tips vs. day of a week")
+```
+
+From figure above we can see tips amount is nearly consistent throughout a week. Therefore, this feature shouldn't be used further.
+
+```{r}
+trip_df_clean_time %>% 
+    group_by(hourofday) %>% 
+    summarise( average_tips = mean(tip_amount)) %>% 
+    ggplot( ) +
+    geom_bar( mapping = aes(x = hourofday, y = average_tips), stat = "identity") +
+    labs( title = "average tips vs. hour of a day")
+```
+
+From the figure above, we can see that there's a pattern between hour of a day and tip amount. How tips relates to trip distance in a day?
+
+```{r}
+trip_df %>% 
+    mutate( lpep_pickup_hour = format(lpep_pickup_datetime, "%H")) %>% 
+    group_by( lpep_pickup_hour) %>% 
+    summarise( median_trip_distance = median(trip_distance)) %>% 
+    ggplot() + 
+        geom_bar( mapping = aes( x = lpep_pickup_hour, y = median_trip_distance)
+                  , fill ='white', color = 'black', stat = 'identity') +
+        labs( x = "Hour in a day", y = "Median trip distance")
+```
+
+From two graphs above we can see that people give more tips with shorter median trip distance of hours in a day. Therefore we may say these two trends are negatively correlated.
+
+### average tip and trip distance logarighm.
+
+First take logarithm on dataset then split these values into 8 bins, then calculate the average amount of tips in each bin.
+
+```{r}
+trip_df$logdis <- cut(log10(trip_df$trip_distance),
+    breaks=c(-10,-3,-2,-1,0,1,2,3,10),
+    labels = c(1,2,3,4,5,6,7,8))
+
+trip_df %>% 
+    select(-ehail_fee) %>% 
+    drop_na() %>% 
+    group_by(logdis) %>% 
+    summarise( ave_tip = mean(tip_amount)) %>% 
+    ggplot() +
+    geom_bar( mapping = aes( x = logdis, y = ave_tip), stat='identity') +
+    labs( x = 'logarithm of distance', y = 'average tip',
+          title = 'average tip vs. log(distance)')
+```
+
+From figure above we can see that there's a clear pattern between logarithm distance and tip amount. I would like to include this variable in future analyses.
+
+## CRISP-DM: Data Preparation
+
+### Sanity check
+
+#### - Drop ehail_fee 
+
+```{r}
+trip_df <- trip_df %>% select(-ehail_fee)
+```
+
+#### - Drop negative total amounts
+
+There are also several observations with negative incomes, the total amount charged to passengers. Does not include cash tips, which are abnormal. This could mean that taxi company give portion or whole taxi payment back to the passenger. We could drop these values since they're not meaningful for our analysis.
+
+```{r}
+trip_df %>% 
+    filter( 0 > total_amount) %>% 
+    select( VendorID, passenger_count, total_amount)
+
+trip_df_clean <- trip_df %>%
+    filter( 0 <= total_amount)
+```
+
+#### - Code 99 in RatecodeID update.
+
+After dropping negative total_amount values, RatecodeID 99 are removed. Therefore we could say that rateID 99 is a money back code.
+
+```{r}
+trip_df %>% 
+    pull( RatecodeID) %>% 
+    unique()
+```
+
+#### - Remove 0 minute records
+
+```{r}
+trip_df_clean <- trip_df_clean %>% 
+    filter(lpep_dropoff_datetime != lpep_pickup_datetime)
+```
+
+#### - Remove 0 distance and longer than 1000 mi trips
+
+```{r}
+trip_df_clean <- trip_df_clean %>% 
+    filter(trip_distance != 0) %>% 
+    filter(trip_distance < 1000)
+```
+
+#### - Remove outliers ( z > 3 )
+
+```{r}
+trip_df_outliers <- trip_df %>% 
+    mutate( z = ((tip_amount - mean(tip_amount)) / sd(tip_amount))) %>% 
+    filter( abs(z) > 3) %>% 
+    drop_na()
+
+trip_df_clean <- trip_df %>% 
+    mutate( z = ((tip_amount - mean(tip_amount)) / sd(tip_amount))) %>% 
+    filter( abs(z) <= 3) %>% 
+    drop_na()
+
+trip_df_clean
+```
+
+
+#### Plot of tips amount vs. payment type from clean data.
+
+```{r}
+payment_type_dict = c("Credit Card", "Cash", "No Charge", "Dispute", "Unknown", "Voided Trip")
+trip_df_clean %>% 
+    mutate( payment_type_str = sapply(trip_df_clean $payment_type,
+                                      function(i) payment_type_dict[i])) %>% 
+    select( payment_type_str, tip_amount) %>% 
+    drop_na() %>% 
+    ggplot( ) +
+    geom_boxplot( mapping = aes( y = tip_amount, x = payment_type_str, 
+                                 fill = payment_type_str)) +
+    labs( x = "Payment Method", y = "Tips Amount (dollors)", 
+          title = "Boxplot of Tips Amount verses Payment Method for Taxi.")
+```
+
+#### Plot of tips amount vs. payment type from outlier data.
+
+```{r}
+trip_df_outliers %>% 
+    mutate( payment_type_str = sapply(trip_df_outliers $payment_type,
+                                      function(i) payment_type_dict[i])) %>% 
+    select( payment_type_str, tip_amount) %>% 
+    drop_na() %>% 
+    ggplot( ) +
+    geom_point( mapping = aes( y = tip_amount, x = payment_type_str)) +
+    labs( x = "Payment Method", y = "Tips Amount (dollors)", 
+          title = "Boxplot of Tips Amount verses Payment Method for Taxi.")
+```
+
+
+### Correlation table
+
+
+"The correlation coefficient is a statistical measure of the strength of the relationship between the relative movements of two variables." The correlation between two variables are stronger if the coefficient is more close to 1. In this work, I use variables that have cor > 0.1 with tips_amount for further analyses. 
+
+They are:
+
+DOLocationID
+
+fare_amount
+
+extra
+
+total_amount
+
+payment_type
+
+congestion_surcharge
+
+Other variables such day of a week and hour of a day have only weak correlation with tips amount, but log(distance) will try to use for tips prediction.
+
+```{r}
+tip_cor_matrix <- cor(trip_df_clean[sapply(trip_df_clean, is.numeric)])[10,]
+tip_cor_matrix
+```
+
+Only looking at correlations greater than 0.1:
+
+```{r}
+tip_cor_matrix[abs(tip_cor_matrix) > 0.1]
+```
+
+Selecting variables for prediction.
+
+```{r}
+trip_df_for_prediction <- trip_df_clean %>% 
+  select(DOLocationID, fare_amount, extra, total_amount, payment_type, congestion_surcharge, logdis, tip_amount)
+glimpse(trip_df_for_prediction)
+trip_df_for_prediction$logdis <- as.numeric(trip_df_for_prediction$logdis)
+```
+
+None of these variables are categorical an non-numeric, therefore no encoding needed. However, conversion from factor to numeric is needed for logdis variable.
+
+#### Normalization
+
+```{r}
+norma <- function(x){
+  (x-min(x))/(max(x)-min(x))
+}
+
+trip_df_norm <- sapply(trip_df_for_prediction, norma) %>% as.data.frame()
+```
+
+
+#### Data split
+
+Split 7% to training set, and 3% for testing set. There are intotal 300k+ rows in dataset, it's too many for compiling 2+ different k in a reasonable time. First, randomly pick 10%, then pick 70% and 30% for train and test.
+
+```{r}
+set.seed(7)
+trip_df_for_prediction_10p <- trip_df_for_prediction[sample(1:nrow(trip_df_for_prediction),
+                           .1*floor(nrow(trip_df_for_prediction))), ]
+
+sample_train_idx <- sample(1:nrow(trip_df_for_prediction_10p),
+                           .1*floor(nrow(trip_df_for_prediction_10p)))
+sample_train <- trip_df_for_prediction[sample_train_idx, ]
+sample_test <- trip_df_for_prediction[-sample_train_idx, ]
+```
+
+
+## CRISP-DM: Modeling
+
+### Creating KNN function.
+
+From last assignment.
+
+```{r}
+# Inputs: train data, test data, label of train data, and k.
+library(class)
+MSE <- function(x){
+  mean(sum((x - mean(x))^2))
+}
+
+knn.predict <- function( train, test, k){
+  knn_pred <- knn(train, test, train$tip_amount, k)
+  mse_i <- MSE( as.numeric(levels(knn_pred))[knn_pred]- test$tip_amount)
+  return (mse_i)
+}
+```
+
+k ranges from 1 to 25 is used for knn and append to a tibble.
+
+```{r}
+kvspred <- tibble('k'=numeric(), 'mse'=numeric())
+for(i in 1:25){
+  mse.i = knn.predict(sample_train, sample_test,2)
+  kvspred <- add_row(kvspred, 'k'=i, 'mse'=mse.i)
+}
+```
+
+Plot k vs. MSE.
+
+```{r}
+ggplot(data = kvspred) + 
+  geom_line( mapping = aes(x = k, y = mse)) +
+  labs( title = "MSE vs. k values")
+```
+
+In the plot we can see that k=3 and k=25 have the smallest MSE among 25 values. KNN prediction has at most 10% improvement by using k = 3 or 25 comparing to k = 24.
+
+However, I don't recommend using KNN for this type of prediction. The first thing is tips amount is more like a continuous variable instead of categorical. Therefore, linear regression should be more suitable for this circumstances. Also, KNN involves too much calculation for distance between points. for our 300k+ dataset, it would take too much time for making a prediction.
+

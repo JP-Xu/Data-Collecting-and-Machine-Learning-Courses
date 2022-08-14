@@ -1,0 +1,381 @@
+---
+title: "Pacticum 1"
+author: "Jiaming Xu"
+date: "2/3/2022"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r load packages}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+# Q1:
+
+## part 0, 1:
+
+```{r load data set.}
+df <- read_csv("diabetes.csv")
+str(df)
+```
+
+## Part 3:
+
+Use mutate function add a column for x, ranging from minimun to maximum value of ages, and another column for normal distribution with same mean and standard deviation as Age column as a function of x. Then use ggplot, geom_histogram to plot frequency distribution of Age column and use geom_line to plot normal distribution.
+
+```{r 3}
+df %>% 
+    mutate( x = seq(min(Age), max(Age), length.out = nrow(df)),
+            norm_age = dnorm(x, mean = mean(Age), sd = sd(Age))) %>% 
+    ggplot() +
+        geom_histogram(mapping = aes(x = Age, y = ..density..), binwidth = 2, fill = 'white', color = 'black')  +
+        geom_line( mapping = aes(x = x, y = norm_age), color = 'red') +
+        labs(title = "Age frequency histogram plot of patients",
+             x = 'Age', y = 'Frequency')
+```
+
+## Part 4:
+
+"Normality Test in R" on STHDA:
+
+"From the output, the p-value > 0.05 implying that the distribution of the data are not significantly different from normal distribution. In other words, we can assume the normality."
+
+The p value of age = 2.2e-16 which is really small almost zero, means the distribution of age is not a normal distribution.
+
+```{r}
+if(!require(devtools)) install.packages("devtools")
+devtools::install_github("kassambara/ggpubr")
+library(ggpubr)
+shapiro.test(df$Age)
+```
+
+## Q5:
+
+1. make a function to calculate z score.
+
+2. create a vector called "z_names" containing column names with "_z" as suffix.
+
+3. use sapply to apply "zscore" function on each column of df, then bind them together, save as a tibble to "df_z"
+
+4. rename column names of "df_z" by "z_names".
+
+5. use apply function to apply "dplyr::filter" function to each column to find the absolute value of z_score is larger than 2, then use the returned logical vector to find then in the initial tibble "df". For better visulization, cbind the zscore of current column at the end.
+
+6. use sapply to calculate how many outliters in each column.
+
+For these outliers, there are several common methods:
+
+1. Deleting observations
+
+2. Transforming values, like log, cubic root, scaling, etc.
+
+3. Imputation by mean, median, or mode.
+
+4. Separately treating.
+
+In our case, we should treate outliers of different varialbes separately. For example, out liers of pregnancies are more than 10, we may say this is reasonalbe and we can keep these data, or inputate them. However, outliers of blood pressure are zeros, which doesn't make any sense. We have to replace these zeros by some values, median is preferred. However for outliers of age, DiabetesPedigreeFunction, BMI, etc. that's not zero, they shouldn't be rescaled because these values are medical significant. Therefore in my opinion, we should create another model for these valueable outliers to predict outcome of patitents like these outliers.
+
+lapply is used to find outliers in "df" data frame since the length of each results are not the same. outliers is a list. Also, we can directly find the outliers in z standardized "df_z" data frame. It depends on what we want to see.
+
+```{r}
+zscore <- function(x){
+  return ((x - mean(x))/sd(x))
+}
+z_names <- str_c(names(df), '_z')
+df_z <- sapply(df, function(x){cbind( zscore(x))}) %>% as_tibble()
+names(df_z) <- z_names
+
+df_outliers <- lapply(df_z,function(x) {
+    df[abs(x)>2,] %>% 
+        cbind(z = x[abs(x)>2])
+    })
+df_outliers
+df_outliers_distribution <- sapply(df_z, function(x) sum(abs(x) > 2))
+ggplot()+
+    geom_bar( mapping=aes(x = names(df_outliers_distribution), y = df_outliers_distribution), stat="identity") +
+    labs( title = "Number of outliters in each variable", x = "Variable", y = "Count") +
+    coord_flip()
+```
+
+## Q6:
+
+"zscore" function is defined by taking a vector as input, return z standardized vector.
+Using "sapply" to perform "zscore" function on each column then cbind results together, format it as a tibble, save it to a data frame "df_z".
+
+```{r}
+zscore <- function(x){
+  return ((x - mean(x))/sd(x))
+}
+
+df_z <- sapply(df, function(x){cbind( zscore(x))}) %>% as_tibble()
+df_z$Outcome <- df$Outcome
+str(df_z)
+```
+
+## Q7:
+
+## stratified sample:
+
+Although it's unclear what's our prediction in the problem description, but we can infer that the goal is to predict if a given patient can discharge with 0 or 1 outcome code. 
+
+For stratified sample, there are two: 0 and 1. so sample n = floor( 0.15 * nrow(df_z) / 2) from each layer from outcome.
+
+```{r}
+set.seed(1) 
+
+# Filter out two outcomes then randomly select 15% of observations in each subset. 
+# Then bind rows of train and test samples together, data frame reordered.
+
+oc0 <- df_z %>% filter(Outcome == 0)
+sample0 <- sample.int( nrow(oc0), floor(0.15 * nrow(oc0)), replace = FALSE)
+oc1 <- df_z %>% filter(Outcome == 1)
+sample1 <- sample.int( nrow(oc1), floor(0.15 * nrow(oc1)), replace = FALSE)
+
+sample_test <- rbind(oc0[sample0, ], oc1[sample1, ])
+sample_train <- rbind(oc0[-sample0, ], oc1[-sample1, ])
+
+sample_test_label <- sample_test$Outcome    # argument cl takes only factor as an input of knn()
+sample_train_label <- sample_train$Outcome
+
+sample_test <- sample_test[ ,-9]    # Drop outcome columns
+sample_train <- sample_train[ ,-9]
+
+```
+
+Test if stats of test set meet our needs. 
+
+~65% data are 0 in our sample_test, nearly the same as original data set. number of observations in our test sample is 14.97%, nearly 15%.
+
+```{r}
+sum(df$Outcome == 0)/nrow(df) # Number of 0 in original df.
+sum(sample_test_label == 0)/(length(sample0) + length(sample1)) # Number of 0 in test data set.
+nrow(sample_test)/ nrow(df)
+```
+
+## Q8:
+
+getMode function: take the most common element in a vector.
+
+My kNN: 
+
+1. create an empty modes_output vector for output.
+
+2. loop through each row in the test data set.
+
+3. inside loop: use sweep function to substract train data set by a row in the test data sett save to data set a. Then square the values in a, sort it, then take the indeces of the first k rows, to top_index. then use getMode function to find the most common value in of these indeces in train_labels. Append result into modes_output.
+
+```{r}
+library(gmodels)
+getMode <- function(x) {
+    ## Took and modified from https://www.delftstack.com/howto/r/mode-in-r/.
+    u <- unique(x)
+    return (u[which.max(tabulate(match(x, u)))])
+}
+
+my_knn <- function( train, test, cl, k){
+    modes_output <- vector()
+    for (i in 1:nrow(test)) {
+        a <- sweep( as.matrix(train), 2, as.matrix(test[i, ])) %>% as_tibble()
+        top_index <- sort(rowSums(a^2), index.return=T)$ix[1:k]
+        mode <- sample_train_label[top_index] %>% getMode()    
+        modes_output <- append(modes_output, mode)
+    }
+    return (modes_output)
+}
+
+goal <- tibble( Pregnancies = 4,
+                Glucose = 118,
+                BloodPressure = 50,
+                SkinThickness = 30,
+                Insulin = 78,
+                BMI = 35,
+                DiabetesPedigreeFunction = 0.279,
+                Age = 29)
+
+goal_z <- (goal - colMeans(df[, -9])) / sapply(df[, -9], function(x) sd(x))
+goal_z
+
+my_pred <- my_knn(sample_train, sample_test, sample_train_label, 5)
+CrossTable(my_pred, sample_test_label)
+my_knn(sample_train, goal_z, sample_train_table, 5)
+```
+
+
+## Q9:
+
+Load class package, use knn function to compare accuracy of my_knn function. Results are identical, hence my_knn is reliable. The prediction of the new case is 1, same as my_knn function.
+
+```{r}
+library(class)
+set.seed(1)
+df_pred <- knn( train = sample_train, 
+                test = sample_test, 
+                cl = sample_train_label, k=5)
+CrossTable(df_pred, sample_test_label)
+knn( train = sample_train, 
+                test = goal_z, 
+                cl = sample_train_label, k=5)
+```
+
+## Q10:
+
+Use for look calculate accurate rate with k = 2 to 8, save results in the vector "acc_rate". Plot it as line, define title, x and y labels.
+
+```{r}
+set.seed(1) # Make sure knn gives the same results.
+acc_rate <- vector()
+for (k in 2:8) {
+  df_pred <-  knn(sample_train, 
+                sample_test, 
+                sample_train_label, k= k)
+  acc_rate <- append(acc_rate, sum(df_pred == sample_test_label)/ length(sample_test_label))
+}
+
+ggplot( ) +
+  geom_line( mapping = aes(x = seq(2,8), y = acc_rate)) +
+  geom_point( mapping = aes( x = seq(2, 8), y = acc_rate), color = 'red') +
+  labs( title = "Prediction accuracy as a function of k", x = 'k', y = 'Accuracy (%)') +
+  scale_y_continuous(labels = scales::percent)
+  
+```
+
+
+
+
+
+# Problem 2:
+
+## Part 1, 2:
+
+```{r}
+library(dplyr)
+library(MASS)
+df <- as_tibble(Boston)
+
+target_data <- df$medv
+train_data <- df[, -ncol(df)]
+```
+
+## Part 3:
+
+use sapply to min-max standardize each column in the train data set.
+
+```{r}
+train_data_norm <- sapply(train_data, function(x) ((x - min(x))/ (max(x) - min(x)))) %>% as_tibble()
+
+# Test if normalization performed.
+sapply(train_data_norm, function(x) range(x))
+```
+
+## Part 5:
+
+create knn.reg function that can basically use the same methodology as my_knn function described above, but not use getMode function for predicting kind of continuous variable in this "house price prediction" question, but weight the first k nearest items, and return a vector containing predicted prices.
+
+```{r}
+
+knn.reg <- function(new_data, target_data, train_data, k ){
+    if (k < 4) {stop("K must greater than 3.")}
+    prices <- vector()
+    for (i in 1:nrow(new_data)) {
+        a <- sweep( as.matrix(train_data), 2, as.matrix(new_data[i, ])) %>% as_tibble()
+        top_index <- sort(rowSums(a^2), index.return=T)$ix[1:k]
+        weight_factor <- c(3,2,rep(1, k-2))
+        price <- sum(target_data[top_index] * weight_factor / sum(weight_factor))
+        prices <- append(prices, price)
+    }
+    return (prices)
+}
+
+```
+
+## Part 5:
+
+create new data, normalize it use coefficients of min-max normalization of train data set, then apply it knn.reg function.
+
+```{r}
+new_data <- tibble( crim = 0.15560, zn = 12.5,
+                    indus = 7.87, chas = 0,
+                    nox = 0.524, Rm = 6.173, age = 96.1,
+                    dis = 5.9505, rad = 5, tax = 311, 
+                    pratio = 15.2, black = 396.9, lstat = 19.5)
+new_data_norm <- (new_data - sapply(train_data, min)) / (sapply(train_data, max) - sapply(train_data, min))
+knn.reg( new_data_norm, target_data, train_data_norm, 5)
+```
+
+
+## Part 6:
+
+take out 10% randomly from train data set as test data set, keep the rest as train data set, apply same for labels. measure the MSE between results from knn.reg function and test label. MSE of knn.reg result is ~14.45 thousand dollars.
+
+```{r}
+set.seed(1)
+test_data_index <- sample.int( nrow(train_data_norm), floor(0.1 * nrow(train_data_norm)),
+                               replace = FALSE)
+
+sample_test <- train_data_norm[test_data_index, ]
+sample_train <- train_data_norm[-test_data_index, ]
+sample_train_label <- target_data[-test_data_index]
+sample_test_label <- target_data[test_data_index]
+
+knnreg_pred <- knn.reg( sample_test, sample_train_label, sample_train, 5)
+
+my_mse <- mean(( knnreg_pred - sample_test_label)^2)
+my_mse
+```
+
+# Problem 3:
+
+## Part 1:
+
+Load data.
+
+```{r}
+library(tidyverse)
+df <- read_csv('kc_house_data.csv')
+```
+
+## Part 2:
+
+Create year_month column contains Year-Month, then calculate average price per sqft of living room by the Yaer-Month column, save it to avg_price_sq_ft column. then separate Year-Month column into a Year and a Month column.
+
+```{r}
+df_st <- df %>% 
+  mutate( year_month = format(date, "%Y-%m")) %>% 
+  group_by( year_month) %>% 
+  summarise( avg_price_sq_ft = mean(price/sqft_living)) %>%
+  separate(year_month, c("year", "month"), sep = '-') %>% 
+  arrange( year,month) %>% 
+  mutate( tper = seq(1:length(year))) %>% 
+  relocate( tper, .before = year)
+
+df_st
+```
+
+
+
+## Part 3:
+
+Plot average price per sqft of living room versus time period.
+
+```{r}
+ggplot(df_st) +
+    geom_line( mapping = aes( x = tper, y = avg_price_sq_ft)) +
+    ylab("Average price per squared foot of living room ($/ft^2)") +
+    xlab("Time period (month from 2014 May)")
+```
+
+
+
+## Part 4:
+
+Create weight_factor vector contains factors for last three months. Calculate weighted prediction for next month. (2015-Jun)
+
+```{r}
+weight_factor = c(1, 3, 4) # ascending indexing.
+pred <- sum(df_st$avg_price_sq_ft[ (nrow(df_st)-2): nrow(df_st)] *weight_factor ) / sum (weight_factor)
+pred
+```
+
+

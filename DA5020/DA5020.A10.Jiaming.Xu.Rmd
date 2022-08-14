@@ -1,0 +1,144 @@
+---
+title: "DA 5020 Assignment 10"
+author: "Jiaming Xu"
+output:
+  html_document:
+    df_print: paged
+---
+
+## Q1. Definition of confident interval and prediction interval.
+
+A confident interval describes how well the determination of a parameter. For example, a 95% confident interval means 95 events happened within a range of values out of 100 events statistically (population mean).
+
+A prediction interval describes what's the expected range of value for the next data point (individually). 
+
+Also, a prediction interval has a larger range than a confident interval, and it's not necessary to be converged to a single value as sample size increases.
+
+A prediction interval includes the range of individual values of the population, while a confident interval describes the range of population mean could lies in for 95% cases (if we use 95% confidence and prediction intervals).
+
+## Q2. 
+
+```{r}
+library(openintro)
+library(tidyverse)
+library(psych)
+
+
+df <- sapply(ncbirths,as.numeric)
+df[,c(3,5,7,10,11,12,13)] <- df[,c(3,5,7,10,11,12,13)] - 1
+df <- as.data.frame(df)
+cor(df, use='complete.obs')
+pairs.panels(df)
+```
+
+From the correlation table above we can see, there's a relatively strong linear relationship between fage~mage, mature~fage~mage, weeks~premie. For the birth weight, weeks and premie have two stongest correlations. However, since weeks~premie also have a strong correlation, we may not need to consider two factors at the same time, since that's make sense that premature and birth weight both affected by weeks. There are several factors are not relavent to birth weight, such as habit, fage, mage, mature, etc. Correlation between father's age and birth weight is 0.07, which is a really small number means nearly no correlation.
+
+## Q3: Full multiple regression model.
+
+df here contains dummy codes for categorical variables for linear regression aims.
+
+```{r}
+birthw.lm <- lm(weight ~ ., data = df)
+
+# R-squared
+summary(birthw.lm)$r.squared
+summary(birthw.lm)$adj.r.squared
+```
+
+R squared value is 0.605, not really good. Adj. R suqred is 0.6.
+
+```{r}
+# standard error
+summary(birthw.lm)$sigma
+```
+
+Standard error is 0.913, it means our prediction would have +/- 0.913 error.
+
+```{r}
+# f-statistic
+summary(birthw.lm)$fstatistic
+```
+
+F statistics show 12 freedom means 12 variables used in lm. F value is 100 is a reansonable high value, the lm model is not bad.
+
+```{r}
+# p values
+summary(birthw.lm)$coefficients[,4]
+```
+
+p values for 12 variables are listed above. Several of them are extremely small which means they're statistically significant.
+
+## Q4: Multi-regression model with p value backward elimination.
+
+```{r}
+lm_backelim_p <- function(x_train, keep = FALSE, loop = 10, trace = 1, p = 0.1){
+  test <- x_train
+  x.lm <- lm(formula = weight ~ . , data = test)
+  for (q in 1:loop) {
+    n = 1
+    if (trace == 1) {
+      print(q)
+      print(sprintf("Standard Error is %.5f, AR2 is %.5f",
+                    summary(x.lm)$sigma,
+                    summary(x.lm)$adj.r.squared))
+      print(summary(x.lm)$coefficients)
+    }
+    lm.summary <- summary(x.lm)$coefficients[, 4]
+    p.to.drop <- names(sort(lm.summary, decreasing = TRUE))[n]
+    ## Jump to second or third highest p value if highest is in keep input.
+    while(any(p.to.drop == keep)){
+      
+      n = n + 1
+      p.to.drop <- names(sort(lm.summary, decreasing = TRUE))[n]
+    }
+  
+    if ( lm.summary[p.to.drop] > p ) {
+      print(sprintf("%s is removed since it's p value is %.3f", p.to.drop, lm.summary[p.to.drop]))
+      p.to.drop <- str_remove_all(p.to.drop, '`')
+      test <- dplyr::select(test, -p.to.drop)
+      
+    }
+    else{break} # Stop while loop if no p grater than the threshold.
+    x.lm <- lm(formula = weight ~ . , data = test)
+  }
+  
+  print("p backward elimination terminated since no p values satisfy the cutting criteria.")
+  x.lm
+}
+
+p_lm <- lm_backelim_p(df, trace = 1, p = 0.05, loop = 20)
+```
+
+I write a p value backward elimination function called lm_backelim_p. It drop variables based on it's p value if it's larger than the setting value. Here, the value for dropping is p > 0.05. Standard error and adjusted R suqared are printed after each step, and the variable dropped by each step is also printed out with its p value.
+
+In total, mage, mature, visits, premie, marital are dropped since their p values are larger than 0.05. Standard error decreases as p elimination goes on, but fluctuated at the end. Same trends for adjusted R squared.
+
+## Q5: Prediction
+
+```{r}
+test_sample <- data.frame("fage"=40, "mage"=32, "mature"="mature mom", "weeks"=42, "premie"="full term", "visits"=12, "marital"="married", "gained"=22, "weight"=NA, "lowbirthweight"="not low", "gender" = "female", "habit" = "nonsmoker", "whitemom"="white")
+
+# Convert categorical variables to numeric. Row concatenate test sample to the end of training dataset, then convert. The predict function is used for prediction.
+test_df <- sapply(as_tibble(rbind(ncbirths, test_sample)), as.numeric)
+test_df[,c(3,5,7,10,11,12,13)] <- test_df[,c(3,5,7,10,11,12,13)] - 1
+predict(p_lm, newdata = as.data.frame(test_df)[nrow(test_df),])
+```
+
+The predicted baby weight is 8.02 lbs based on p elimination multi-linear regression model.
+
+```{r}
+predict(p_lm, newdata = as.data.frame(test_df)[nrow(test_df),],
+        interval = 'predict', level=.95)
+```
+
+The 95% prediction interval is [6.22, 9.81].
+
+```{r}
+predict(p_lm, newdata = as.data.frame(test_df)[nrow(test_df),],
+        interval = 'confi', level=.95)
+```
+
+The 95% confidence interval is [7.85, 8.18].
+
+The values above indicate that the true mean weight of the babies in population have the same parameter as our test sample lies in the range of [7.85, 8.18] for 95% cases, while the individual weight can lie in the range of [6.22, 9.81] for 95% cases. Weights are in lbs.
+

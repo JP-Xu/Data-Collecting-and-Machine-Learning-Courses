@@ -1,0 +1,327 @@
+---
+title: "DA5020 - Practicum 2"
+author: "Jiaming Xu"
+date: "Mar 28, 2022"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+## 1. Connecting to Mongodb and inserting data.
+
+1. Only events during the daytime saving period (Mar 13th - Nov 6th) are ratained.
+
+Outliers of ELAPSED_TIME and DISTANCE are retained.
+
+Number of Observations is reduced from 1897503 (whole data), to 1261575 (daylight saving data),.
+
+2. FL_DATE is converted to ISODate() in mongodb using update command.
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(mongolite)
+library(rvest)
+
+mongo_url = "mongodb+srv://jiamingxu:199410001@da5020-cluster.tsrxu.mongodb.net/da5020-cluster?retryWrites=true&w=majority"
+con <- mongo(db = "airline_performance", collection = "flights_2019",
+             url = mongo_url, verbose = TRUE)
+
+# -------------------------
+#   Codes below are only for the first compiling.
+# -------------------------
+#
+# Drop previous loaded data.
+#con$drop()
+#
+#df <- read_csv("2019_ONTIME_REPORTING_FSW.csv")
+#df <- df %>% 
+#  mutate(FL_DATE = as.Date(FL_DATE, format=("%Y-%m-%d"))) %>% 
+#  filter( FL_DATE >= "2019-03-10" & FL_DATE <= "2019-11-03")
+#
+#con$insert(df)
+#con$update('{}', update='[{"$set": { "FL_DATE": { "$toDate": "$FL_DATE"}}}]', multiple = TRUE)
+```
+
+## 2. 
+
+### a. Number of Flights.
+
+There are intotal 1218852 flights during the daylight saving time after removing outliers.
+
+```{r}
+con$count('{}')
+```
+
+
+### b. Mean and deviation of the elapsed time.
+
+Mean and standard deviation of the elapsed time are calculated below. Data were retrived from Mongodb two times for mean and sd functions.
+
+The mean of flight time is 173.8236 minutes (2 hours and 54 minutes) with standard deviation 92.08 minutes ( 1 hour and 32 minutes). 
+
+```{r}
+con$aggregate( '[{ "$group": { "_id": true , "AverageElapsedTime": { "$avg": "$ELAPSED_TIME"}}}]')
+
+con$aggregate( '[{ "$group": { "_id": true , "SDofElapsedTime": { "$stdDevSamp": "$ELAPSED_TIME"}}}]')
+```
+
+## 3.
+
+Preparing for CARRIER_CODE to Airline name converter function:
+
+1. The rvest package is used for reading html then converting as a data frame.
+
+2. Data frame rows contain NA are removed.
+
+3. Regex is used for extracting only two-letter code IATA for the IATA column. (citation numbers and symbols are removed.)
+
+4. Only the first name of company is returned if there are multiple IATA code matching.
+
+5. Function IATA2NAME() can take a vector of IATA codes as input, return a rector containing company names.
+
+Southwest airlines provide the most flights, followed by American Airlines, and United Airlines. SkyWest and Delta airlines posse 4th and 5th positions. 
+
+```{r}
+airline_codes_url <-  "https://en.wikipedia.org/wiki/List_of_airline_codes"
+airline_codes_html_raw <- read_html(airline_codes_url)
+
+df <- airline_codes_html_raw %>% 
+    html_nodes(xpath = '//table') %>% 
+    html_table()
+
+AIRLINE_CODE_DICT <- df[[1]] %>% 
+  select( c(IATA, Airline)) %>% 
+  filter( IATA != "") %>% 
+  mutate( IATA = str_extract(IATA, '\\w{2}')) %>% 
+  drop_na()
+
+IATA2NAME <- function(x){
+    sapply(x, function(y) {AIRLINE_CODE_DICT[AIRLINE_CODE_DICT[1] == y,2][1,]}) %>% as.character()
+}
+
+IATA2NAME("MQ")
+
+## Distinct carrier codes:
+con$distinct("CARRIER_CODE")
+```
+
+1. con$aggregate() is used for counting flights for each carrier.
+
+2. add new column called CARRIER_NAME contains name of companies by using IATA2NAME function created previously.
+
+3. Find top 10 companies who have the largest amount of flights.
+
+4. Plot top 10 as a bar plot.
+
+```{r}
+flights_freq_top10 <- con$aggregate('[{ "$group": { "_id": "$CARRIER_CODE" , "count": {"$sum" : 1}}},
+                              {"$sort": {"count": -1}},
+                              {"$limit":10}]')
+
+flights_freq_top10 %>% 
+  as_tibble() %>% 
+  mutate( CARRIER_NAME = IATA2NAME(`_id`)) %>% 
+  ggplot() +
+    geom_col( mapping = aes(x = reorder(CARRIER_NAME, count), y = count)) +
+    coord_flip() +
+    labs(y = "Frequency", x = "Carrier Name")
+```
+
+## 4. Total flight time
+
+1. Find the top 5 carrier's codes for retrieving data from Mongodb.
+
+2. Retrieving AA, UA, OO, DL and WN flight data from Mongodb using \$match.
+
+3. Convert date to month using \$trunc
+
+4. Ggplot2 is used for plotting data as lines.
+
+For American Airlines, Southwest, and SkyWest, the frequency of flights from April to August is even distributed, Spet and Oct drop a little. Mar and Nov have the lowest frequency.
+
+Delta airlines has largest frequency in July, and United airlines in Auguest.
+
+```{r}
+con$aggregate('[
+              {"$group": { "_id": "$CARRIER_CODE" , "count": {"$sum" : 1}}},
+              {"$sort": {"count": -1}},
+              {"$limit":5}]')
+
+
+monthly_freq_top5 <- con$aggregate('[{ "$match": {"CARRIER_CODE":{ "$in" : ["AA", "UA", "OO", "DL", "WN"]}}},
+              {"$project": {"elapsed_time":"$ELAPSED_TIME","CARRIER_CODE":"$CARRIER_CODE", "dateAttempted":1, "month":{ "$trunc" :{ "$month": "$FL_DATE"}}}},
+              {"$group": {"_id": {"month":"$month", "CARRIER_CODE":"$CARRIER_CODE"}, "TotalFlightTime": {"$sum":"$elapsed_time"}}}]') %>% 
+  as_tibble() %>% 
+  unnest(`_id`)
+
+monthly_freq_top5 %>% 
+  ggplot() +
+  geom_line( mapping = aes(x = month, y = TotalFlightTime, group=CARRIER_CODE)) +
+  facet_wrap( CARRIER_CODE ~ ., nrow = 5)
+
+```
+
+## 5. Busiest day in a week quaterly.
+
+The busiest day in a week is defined by the longest total flights time each quarter.
+
+1. Use \$match function for screen out top 5 companies.
+
+2. Use \$project and \$dayofweek functions to convert date to day of week. Also project other fields needs for next step.
+
+3. group by dayofweek, carriercode, and quarter, calculate the total flight time
+
+Five airlines follow the same daily trend in each quarter. Trends of different quarters are different. 
+
+Saturday is always uncommon for flights for all quarters. Monday and Tuesday are two most uncommon flight dates for people in first quarter, and they get common in the second quarter. People fligh the most on Monday in the 3rd quarter (WOW, interesting), Tuesday and Wednesday the most in the laste quarter. 
+
+
+
+```{r, fig.width = 8.5, fig.height = 11}
+
+## dateQuarter was took from https://stackoverflow.com/questions/28291241/how-to-group-date-quarterly-wise
+
+quarterly_busiest_top5 <- 
+  con$aggregate('[
+                { "$match" : { "CARRIER_CODE" : { "$in": ["AA", "UA", "OO", "DL", "WN"]}}},
+                { "$project": { "dayofweek": { "$dayOfWeek" : "$FL_DATE"},
+                                "elapsed_time": "$ELAPSED_TIME",
+                                "carrier_code":"$CARRIER_CODE",
+                                "dateAttempted":1, "dateQuarter": { "$trunc": {"$add": [{"$divide": [{"$subtract": [{"$month": "$FL_DATE"},1]},3]},1]}}
+                                }},
+                { "$group": { "_id": {"dayofweek": "$dayofweek", "carrier_code":"$carrier_code", "dateQuarter":"$dateQuarter"},
+                                      "totalFlightTime": {"$sum": "$elapsed_time"}}},
+                { "$sort" : { "_id": 1}}]') %>% 
+  as_tibble() %>% 
+  unnest( cols = `_id`) ## Unnest tibble to two vectors.
+
+quarterly_busiest_top5 %>% 
+  mutate(CARRIER_NAME = IATA2NAME(carrier_code)) %>% 
+  ggplot() +
+  geom_line( mapping = aes( x = dayofweek, y = totalFlightTime,
+                           group = CARRIER_NAME)) +
+  facet_wrap( CARRIER_NAME ~ dateQuarter, nrow = 5, scales = 'free_y')
+
+```
+
+5. Display the values of busiest day each quarter for each Carrier for the numerical analysis.
+
+```{r}
+quarterly_busiest_top5 %>% 
+  group_by(dateQuarter,carrier_code) %>% 
+  filter( totalFlightTime == max(totalFlightTime))
+```
+
+## 6. Flight lines, delays, and airports info of N109DU.
+
+'N109DU' flights from SFO to SEA the most at 35 times a year.
+
+From the average arrival delay and departure delay we may say that 
+
+1. \$ match for data of N109DU only
+
+2. \$project three fields for group and analyses
+
+3. \$group by ORIGIN+DEST, calculate the average arrival delay and departure delay.
+
+4. calculate the operation of this flight.
+
+```{r}
+
+con$aggregate('[{ "$match": {"TAIL_NUM": "N109DU"}},
+                { "$project": {"ORIDES": {"ORIGIN":"$ORIGIN", "DEST":"$DEST"},
+                               "ARR_DELAY":"$ARR_DELAY",
+                               "DEP_DELAY":"$DEP_DELAY"}},
+                { "$group" : {"_id": "$ORIDES", "ave_arr_delay": { "$avg": "$ARR_DELAY"},
+                                                "ave_dep_delay": { "$avg": "$DEP_DELAY"}}}]') %>% 
+  as_tibble() %>% 
+  unnest(`_id`)
+
+# Which airline company operates this aircraft:
+con$aggregate('[{ "$match": {"TAIL_NUM": "N109DU"}},
+                {"$group": {"_id": "$CARRIER_CODE" }}]') %>% 
+    as_tibble() %>% 
+    pull(`_id`) %>% 
+    IATA2NAME()
+
+
+```
+
+4. In fact, SLC and SJC have the longest departure delays for this aircraft, SFO and SLC have the longest arrival delays. I do one more analysis here.
+`
+```{r}
+con$aggregate('[{ "$match": {"TAIL_NUM": "N109DU"}},
+                { "$project": {"DEST":"$DEST",
+                               "ARR_DELAY":"$ARR_DELAY"}},
+                { "$group" : {"_id": "$DEST", "ave_arr_delay": { "$avg": "$ARR_DELAY"},
+                                                "count": {"$sum":1}}}]')
+
+con$aggregate('[{ "$match": {"TAIL_NUM": "N109DU"}},
+                { "$project": {"ORIGIN":"$ORIGIN",
+                               "DEP_DELAY":"$DEP_DELAY"}},
+                { "$group" : {"_id": "$ORIGIN", "ave_dep_delay": { "$avg": "$DEP_DELAY"},
+                                                "count": {"$sum":1}}}]')
+```
+
+## 7. Most common destination state - MA, CA and TX.
+
+All most common destination state of three states are California.
+
+Mongodb shell script:
+
+db.flights_2019.aggregate([{ \$match: { ORIGIN_ST: { \$in: ["MA", "CA", "TX"] } } }, { \$project: { DEST: "\$DEST_ST", ORIGIN_ST: "\$ORIGIN_ST" } }, { \$group: { _id: { DEST: "\$DEST", ORIGIN_ST: "\$ORIGIN_ST" }, count: { \$sum: 1 } } }, {\$sort:{"count":-1}}, {\$group: {_id: "\$_id.ORIGIN_ST", "LARGEST": {\$first:"\$_id.DEST"}, "count": {\$first:"\$count"}}}])
+
+This question is the most annoying one. At the beginning, I use $group twice, one for count and the other one for find the max in each group. However, other fields of the max observation couldn't be extracted. I tried \$push function to get DEST info, but it pushed all DEST in that group, which isn't what I want. So I use sort first, then use \$group and \$first to extract them.
+
+```{r}
+
+con$aggregate('[ { "$match" :{ "ORIGIN_ST" :{ "$in": ["MA", "CA", "TX"]}}},
+                 { "$project": {"DEST":"$DEST_ST",
+                                "ORIGIN_ST":"$ORIGIN_ST"}},
+              { "$group": {"_id": {"DEST":"$DEST", "ORIGIN_ST":"$ORIGIN_ST"}, "count": {"$sum": 1}}},
+              { "$sort": {"count":-1}},
+              { "$group": {"_id": "$_id.ORIGIN_ST", "DEST": {"$first": "$_id.DEST"}, "count":{"$first":"$count"}}}
+              ]')
+
+```
+
+## 8. One more analysis - Correlation Between Departure Delay and Departure time.
+
+From previous analyses we know that delay is related to airport location, and weather from life experience. Besides these two common reasons, does arrival time or departure time has any impact on delays? I will dig that out in this problem.
+
+For convenience, two airports - SLC and BOS are analyzed.
+
+1. Departure times are store as numbers on Mongodb, therefore I use \$divide and \$ceil function to convert them to hours only. NOTE: 1 means from 0 to 1, and so on.
+
+2. Create average_dep_delay and delay_count information for plotting, grouped by origin and hour in a day.
+
+3. Plot using ggplot, separate line and columns into two y axises. See legends and y-axis titles.
+
+```{r}
+con$aggregate('[{"$match": {"ORIGIN" :{ "$in": ["BOS", "SLC"]}}},
+              {"$project": {"hour": {"$ceil":{"$divide": ["$DEP_TIME", 100]}}, "origin":"$ORIGIN", "dep_delay":"$DEP_DELAY"}},
+              {"$group": {"_id": {"origin":"$origin", "hour":"$hour"}, "aveDepDelay":{"$avg":"$dep_delay"}, "delay_count":{"$sum":1}}}]') %>% 
+  as_tibble() %>% 
+  unnest(`_id`) %>% 
+  arrange(hour) %>%   
+  ggplot() +
+  geom_bar( mapping = aes( x = hour, y = delay_count, fill = "Num of delayed flights"),
+            stat = 'identity')+
+  geom_line( mapping=aes( x = hour, y = aveDepDelay * 20, group = origin,
+                           lty = 'DEP delay time'), color = "black") +
+  geom_point( mapping=aes( x = hour, y = aveDepDelay * 20),color = "black") +
+  scale_y_continuous(name = 'Number of delayed lights',
+                     sec.axis = sec_axis(~./20, name = 'Departure Delay (minutes)')) +
+  scale_linetype('') +
+  labs(title = 'Number of departure delays and departure time',x = 'Hours in 24 format',
+       fill = '') +
+  facet_wrap( origin ~ .)
+
+```
+
+From the results we can see for Boston airport, departure delay time increase significantly after 21 o'clock. However, since the number of delayed flights after 21 o'clock is only a few, it's not statistically significant. In general, number of delayed flights and delay time increases from noon to evening.
+
+For Salt Lake City, number of delayed flights is higher than Boston airport, but delayed time isn't higher than Boston. It also follows the same trend -  delay time increases from noon to evening, but number of delayed flights is evenly distributed from 10 am to midnight.
+
+

@@ -1,0 +1,115 @@
+---
+title: "Assignment 4"
+author: "Jiaming Xu"
+output: html_notebook
+---
+
+## Q1:
+
+
+```{r}
+library(tm)
+sms_raw <- read.csv("https://da5030.weebly.com/uploads/8/6/5/9/8659576/da5030.spammsgdataset.csv", stringsAsFactors = FALSE)
+sms_raw$type <- factor(sms_raw$type)
+table(sms_raw$type)
+sms_corpus <- VCorpus(VectorSource(sms_raw$text))
+inspect(sms_corpus[1:2])
+sms_corpus_clean <- tm_map( sms_corpus, content_transformer( tolower))
+sms_corpus_clean <- tm_map(sms_corpus_clean, removeNumbers)
+sms_corpus_clean <- tm_map(sms_corpus_clean,removeWords, stopwords())
+sms_corpus_clean <- tm_map(sms_corpus_clean, removePunctuation)
+sms_corpus_clean <- tm_map(sms_corpus_clean, stemDocument)
+sms_corpus_clean <- tm_map(sms_corpus_clean, stripWhitespace)
+sms_dtm <- DocumentTermMatrix(sms_corpus_clean)
+sms_dtm
+
+sms_dtm2 <- DocumentTermMatrix(sms_corpus, control = list(
+    tolower = TRUE,
+    removeNumbers = TRUE,
+    stopwords = TRUE,
+    removePunctuation = TRUE,
+    stemming = TRUE
+))
+```
+
+```{r}
+sms_dtm_train <- sms_dtm[1:4169, ]
+sms_dtm_test  <- sms_dtm[4170:5559, ]
+sms_train_labels <- sms_raw[1:4169, ]$type
+sms_test_labels  <- sms_raw[4170:5559, ]$type
+
+#wordcloud(sms_corpus_clean, min.freq = 50, random.order = FALSE)
+#spam <- subset(sms_raw, type == "spam")
+#ham <- subset(sms_raw, type == "ham")
+#wordcloud(spam$text, max.words = 40, scale = c(3, 0.5))
+#wordcloud(ham$text, max.words = 40, scale = c(3, 0.5))
+```
+
+```{r}
+library(tm)
+sms_freq_words <- findFreqTerms(sms_dtm_train, 5)
+sms_dtm_freq_train <- sms_dtm_train[ , sms_freq_words]
+sms_dtm_freq_test <- sms_dtm_test[ , sms_freq_words]
+convert_counts <- function(x) {
+    x <- ifelse(x > 0, "Yes", "No")
+}
+
+sms_train <- apply(sms_dtm_freq_train, MARGIN = 2,convert_counts)
+sms_test  <- apply(sms_dtm_freq_test, MARGIN = 2,convert_counts)
+
+library(e1071)
+sms_classifier <- naiveBayes(sms_train, sms_train_labels)
+sms_test_pred <- predict(sms_classifier, sms_test)
+library(gmodels)
+CrossTable(sms_test_pred, sms_test_labels,
+    prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE,
+    dnn = c('predicted', 'actual'))
+
+
+
+```
+
+One thing interesting here is the laplace argument was set at 1 in the textbook while I set it to -1 here in order to decrease the FP frequency. I don't know why does this happen, but I guess there's some updates in the function so that laplace actually did different things since I just copy paste the original code from textbook to RStudio.
+
+```{r}
+sms_classifier2 <- naiveBayes(sms_train, sms_train_labels,laplace = -1)
+sms_test_pred2 <- predict(sms_classifier2, sms_test)
+CrossTable(sms_test_pred2, sms_test_labels,
+    prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE,
+    dnn = c('predicted', 'actual'))
+```
+
+# Q2:
+
+```{r}
+library(klaR)
+
+# Load iris data set
+data(iris)
+
+# display basic infomation of iris
+nrow(iris)
+summary(iris)
+head(iris)
+
+# Since the data set is randomly listed, simply pick every 5th rows as valid data set and rests as train data set.
+testidx <- which(1:length(iris[, 1]) %% 5 == 0)
+
+# Separate iris data set into a train and a test data set.
+iristrain <- iris[-testidx,]
+iristest <- iris[testidx,]
+
+# There are many available inputs for NaiveBayes function, but most of the time, at least for this practice, the only two inputs are 1. the labels and 2. data set. Here, I don't know what "~." mean as a suffix of Species column for grouping input, but it works just as it is.
+# The first step using naive bayes prediction is give hypothesis and data set to NaiveBayers function, then shoot predict function to compare results.
+nbmodel <- NaiveBayes(Species~., data=iristrain)
+
+# predict function it think take the prediction from NaiveBayers as input, iristest as validation set, and return the
+prediction <- predict(nbmodel, iristest[,-5])
+
+table(prediction$class, iristest[,5])
+
+```
+
+
+
+

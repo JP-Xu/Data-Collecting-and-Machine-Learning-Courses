@@ -1,0 +1,127 @@
+---
+title: "Assignment 9"
+author: "Jiaming Xu"
+output:
+  html_document:
+    df_print: paged
+---
+
+## Q1: Loading data
+
+```{r}
+library(tidyverse)
+url = "https://data.sfgov.org/api/views/rkru-6vcg/rows.csv?accessType=DOWNLOAD"
+df <- read_csv(url)
+```
+
+There are 12 columns. Two are numerical.
+
+```{r}
+glimpse(df)
+summary(df)
+```
+
+## Q2: Filter domestic flights in March every year.
+
+```{r}
+df_2 <- df %>% 
+  filter(`GEO Region` == 'US', ) %>% 
+  mutate(Date = as.Date(paste0(`Activity Period`, "01"), format="%Y%m%d")) %>%
+  mutate(Year = format(Date, "%Y"), Month = format(Date, "%b")) %>%  
+  filter(Month == "Mar") %>% 
+  group_by(Year) %>% 
+  summarise( Total_passenger = sum(`Passenger Count`))
+df_2 %>% 
+  ggplot( aes(x = Year, y = Total_passenger, group = 1)) +
+  geom_point()+
+  geom_line() +
+  labs( y = "Counts", title = "Total Passenger traveled in March each year.")
+  
+```
+
+From the figure above we can see the number of passenger in 2020 and 2021 drop significantly compared to 2019 since the pademic hit the U.S. in Feb, 2020, and lock down the country in March, 2020.
+
+## Q3: Simple movement for 2019 prediction
+
+
+```{r}
+sim_2019 <- sum(df_2[11:13,2])/3
+real_2019 <- df_2[14,2] %>% as.numeric()
+sprintf("Predicted number of passengers in March 2019 using simple average model among 2016-2018 is %.0f, real number is %.0f, with error %.2f%%.", sim_2019, real_2019, abs(sim_2019-real_2019)/sim_2019*100)
+```
+
+Our prediction is smaller than real number of passengers, but with only 1.89% error. This indicate that our model is pretty reliable for 2019.
+
+## Q4: Weighted prediction for 2019
+
+```{r}
+prew_2019 <- sum(df_2[11:13,2] * c(3,5,7))/sum(c(3,5,7))
+sprintf("Predicted number of passengers in March 2019 using weighted model with factors 3,5,7 among 2016-2018 is %.0f, real number is %.0f, with error %.2f%%.", prew_2019, real_2019, abs(prew_2019-real_2019)/prew_2019*100)
+```
+
+Now we can see the error is decreased to 0.5% using weighted moving average prediction model, which is better than simple moving average result.
+
+## Q5: Exponential smoothing prediction for 2019
+
+```{r}
+preexp <- df_2[3:nrow(df_2),]
+preexp$es <- 0
+preexp$error <- 0
+preexp$es[1] <- df_2$Total_passenger[3]
+alpha <- 0.7
+
+for (i in 2:nrow(preexp)) {
+  preexp$es[i] <- preexp$es[i-1] + (alpha * preexp$error[i-1])
+  preexp$error[i] <-  preexp$Total_passenger[i] - preexp$es[i]
+}
+preexp$perror <- abs(preexp$es - preexp$Total_passenger)*100/preexp$es
+preexp
+```
+
+From the results above we can see the prediction with alpha = 0.7 is 6991736, 92009 more than real value, with 1.316% error. This prediction is not better than weighted moving average method.
+
+
+
+## Q6: Linear regression prediction for 2019
+
+
+```{r}
+df_2 <- df_2 %>% mutate(Year = as.numeric(Year))
+lm_model <- lm(Total_passenger ~ Year, data = df_2[3:13,])
+lm_model
+```
+
+The formula is count = 256703 * Year - 511021470
+
+```{r}
+prel_2019 <- 256703 * 2019 - 511021470
+prel_2020 <- 256703 * 2020 - 511021470
+sprintf("Here we can see the predicted values for 2019 and 2020 are %.0f, %.0f, with error%% %.3f %% and %.3f %%, respectively.", prel_2019, prel_2020, abs(prel_2019-df_2[14,2])*100/prel_2019, abs(prel_2020-df_2[15,2])*100/prel_2020)
+```
+
+
+Not surprisingly, the prediction for 2019 is acceptable, but not for 2020 prediction.
+
+
+## Q7: Calculate MSE for Q5 & Q6.
+
+### MSE for exponential model:
+
+```{r}
+preexp[1:13,] %>% 
+  mutate(SR = error^2) %>% 
+  pull(SR) %>% 
+  mean()
+```
+
+### MSE for linear model:
+
+```{r}
+lm_model_prediction <- lm_model$coeff[2] * df_2[,1] + lm_model$coeff[1]
+sum((lm_model_prediction[1:13,] - df_2[3:13,2])^2)/nrow(df_2[3:13,])
+```
+
+From the values we can see the MSE for exponential model is larger than linear regression model for years from 2008 to 2018
+
+
+

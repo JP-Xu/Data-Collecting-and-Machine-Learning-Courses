@@ -1,0 +1,358 @@
+---
+title: "DA5030 Practicum 3"
+author: "Jiaming Xu"
+date: "Mar 30, 2022"
+output:
+  html_document:
+    df_print: paged
+---
+
+# Problem 1.
+
+### 1. Importing data set and pre-process data.
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(rvest)
+library(psych)
+
+data.url <- "https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.data"
+test.url <- "https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.test"
+
+# Move attributes variable to the first in order to match ics website.
+adult.data <-  read_csv(data.url, col_names = FALSE) %>% relocate(X15)
+adult.test <- read_csv(test.url)
+
+## Processing dataset headers from ics website.
+html_raw <- read_html("https://archive.ics.uci.edu/ml/datasets/adult")
+p.text <- html_raw %>% 
+    html_nodes(xpath='//p[@class="normal"]') %>% 
+    html_text2()
+
+# NOTE: dashes are removed from column names in order to perform neuralnet correctly.
+column_names <- str_match_all(p.text[22], '([\\w-]*\\w+):')[[1]][,2] %>% str_remove_all('-')
+colnames(adult.data) <- column_names
+
+```
+
+### 2. 
+
+1. Replacing missing values which are question marks in the dataset with NAs.
+
+```{r}
+adult.data.na <- 
+    sapply(adult.data, function(x){ ifelse(x == "?", NA, x)}) %>% as_tibble()
+```
+
+2. Checking how many missing informations in each variable:
+
+We can see from results that there are 1836 missing values in workclass, 1843 in occupation, and 583 in native-country. Next, we're going to come up with some idea about how to deal with test missing values.
+
+```{r}
+sapply(adult.data.na, function(x){sum(is.na(x))})
+table(adult.data.na$workclass, useNA = 'ifany') %>% sort(decreasing = TRUE)
+```
+
+3. Dealing with missing data.
+
+First let's see how many observations left when I removed them containing missing values.
+
+```{r}
+adult.data.na %>% drop_na() %>% nrow() / nrow(adult.data.na)
+```
+
+There are 92.6% data left if we removed all missing data. That's still good enough for our analysis, therefore, I'll just remove them for ease of operation.
+
+```{r}
+adult.data.clean <- adult.data.na %>% drop_na() %>% type_convert()
+```
+
+## 3. Creating training and testing dataset.
+
+seed 7 is used for randominization. 0.6999867 of data is saved to adult.data.train for training and the rest for testing.
+
+The training and testing dataset are not assigned since further processing are performed later.
+
+```{r}
+set.seed(7)
+train_idx <- sample( nrow(adult.data.clean), 0.7 *nrow(adult.data.clean), replace = FALSE )
+length(train_idx)/nrow(adult.data.clean)
+```
+
+## 4. Dummy codes creation for categorical variables.
+
+First, let's see how many variables are categorical. There are 9 categorical variables in this dataset in total, and many of them contains multiple values.
+
+```{r}
+summary(adult.data.clean)
+```
+
+sapply is used for looping the dataset. One thing to notice here: lapply results contains character factors while sapply results are unclassed factors. Here we want to use unclassed factors.
+
+```{r}
+adult.data.factor <- lapply(adult.data.clean, function(x){
+    if(typeof(x)=="character"){
+        as.factor(x)}
+    else{x}})
+
+adult.data.num <- as_tibble(sapply(adult.data.factor, unclass))
+
+glimpse(adult.data.num)
+
+### Assigning the training and testing data set.
+adult.data.num$attributes <- as.factor(adult.data.num$attributes)
+adult.data.train <- adult.data.num[ train_idx, ]
+adult.data.test <- adult.data.num[-train_idx, ]
+```
+
+### 5. Build ANN on the data
+
+The 1 is smaller than or equal to 50k, 2 is larger than 50 k in the attributes variable. 
+
+neuralnet can only take a dataframe as input instead of a tibble, also, the column names shouldn't contain any symbols except dots (.). This is the reason why I remove dash '-' in the first step.
+
+```{r}
+set.seed(7)
+if (!require("neuralnet", character.only = TRUE)) {
+      install.packages("neuralnet", dependencies = TRUE)
+}
+library(neuralnet)
+library(gmodels)
+
+cor(sapply(adult.data.factor, unclass))
+```
+
+2 hidden nodes:
+
+```{r}
+set.seed(7)
+att_model_ann_h1 <- neuralnet(attributes ~ age + educationnum + maritalstatus +capitalgain+hoursperweek, data = as.data.frame(adult.data.train), hidden = 1, threshold=0.05, stepmax=1e+08)
+att_model_ann_results_h1 <- predict(att_model_ann_h1, as.data.frame(adult.data.test))
+sum(apply(att_model_ann_results_h1, 1, which.max) == adult.data.test$attributes)/nrow(adult.data.test)
+```
+
+```{r}
+set.seed(7)
+att_model_ann_h2 <- neuralnet(attributes ~ age + educationnum + maritalstatus +capitalgain+hoursperweek, data = as.data.frame(adult.data.train), hidden = 2, threshold=0.05, stepmax=1e+08)
+att_model_ann_results_h2 <- predict(att_model_ann_h2, as.data.frame(adult.data.test))
+sum(apply(att_model_ann_results_h2, 1, which.max) == adult.data.test$attributes)/nrow(adult.data.test)
+```
+
+```{r}
+set.seed(7)
+att_model_ann_h3 <- neuralnet(attributes ~ age + educationnum + maritalstatus +capitalgain+hoursperweek, data = as.data.frame(adult.data.train), hidden = 3, threshold=0.05, stepmax=1e+08)
+att_model_ann_results_h3 <- predict(att_model_ann_h3, as.data.frame(adult.data.test))
+sum(apply(att_model_ann_results_h3, 1, which.max) == adult.data.test$attributes)/nrow(adult.data.test)
+
+```
+
+
+```{r}
+set.seed(7)
+library(kernlab)
+att_model_svm <- ksvm( attributes ~ age + educationnum + maritalstatus +capitalgain+hoursperweek, data = adult.data.num)
+att_model_svm_results <- predict(att_model_svm, adult.data.test, type='response')
+sum(att_model_svm_results == adult.data.test$attributes)/nrow(adult.data.test)
+```
+
+As we can see, for this problem SVM does a better job than ANN. The biggest problem when using ANN for prediction is it consumed too much time. For example, training an ANN model with 4 nodes in one layer among the whole training data set would easily exceeds the default max step defined by the neralnet package which is 1e+6. In addition, 3 hidden nodes has the same performance as 2 nodes, therefore I didn't evaluate the performance 4 hidden nodes. ANN will cost much more time if we use multiple layers and mutiple nodes.
+
+Another issue I met when use neuralnet function is it sometimes does not work properly. For example when I tried to build 2 layers with 2 nodes in each layer, it just didn't run the algorithm. No clue at all.
+
+
+### 6 & 7 & 8. Performance of ANN, SVM, RandomForest.Recall, Precision, etc.
+ 
+
+I use the random forest.
+
+```{r}
+library(randomForest)
+set.seed(7)
+att_model_rf <- randomForest(attributes ~ age + educationnum + maritalstatus +capitalgain+hoursperweek, data = adult.data.num)
+att_model_rf_results <- predict(att_model_rf, adult.data.test)
+sum(att_model_rf_results == adult.data.test$attributes)/nrow(adult.data.test)
+```
+
+There are 87.3% accurate percentage.
+
+### Comparing.
+
+#### 1. Kappa values:
+
+Kappa values ranking: RF > ANN > SVM.
+
+```{r}
+library(vcd)
+att_model_ann_resluts_h3_cat <- as.factor(apply(att_model_ann_results_h3, 1, which.max))
+Kann <- Kappa(table(att_model_ann_resluts_h3_cat,adult.data.test$attributes))$Unweighted[1]
+Ksvm <- Kappa(table(att_model_svm_results, adult.data.test$attributes))$Unweighted[1]
+Krf <- Kappa(table(att_model_rf_results, adult.data.test$attributes))$Unweighted[1]
+tibble(Kann, Ksvm, Krf)
+```
+
+From kappa statistics, randomforest > ANN > SVM, which indicating that randomForest providing the best results among three algorithms.
+
+#### 2. Sensitivities/Recall:
+
+We see that senstivity ranking is SVM > RF > ANN.
+
+```{r}
+library(cluster)
+library(caret)
+tibble(sensitivity(att_model_ann_resluts_h3_cat, adult.data.test$attributes),
+       sensitivity(att_model_svm_results, adult.data.test$attributes),
+       sensitivity(att_model_rf_results, adult.data.test$attributes)) %>% 
+  `colnames<-`(c("ANN","SVM","RF"))
+```
+
+#### 3. Precision
+
+Precision Ranking is : RF > ANN > SVM.
+
+```{r}
+tibble(precision(att_model_ann_resluts_h3_cat, adult.data.test$attributes),
+       precision(att_model_svm_results, adult.data.test$attributes),
+       precision(att_model_rf_results, adult.data.test$attributes)) %>% 
+  `colnames<-`(c("ANN","SVM","RF"))
+```
+
+#### 4. Speciicity
+
+Specificity ranking: RF > ANN > SVM.
+
+```{r}
+
+tibble(specificity(att_model_ann_resluts_h3_cat, adult.data.test$attributes),
+       specificity(att_model_svm_results, adult.data.test$attributes),
+       specificity(att_model_rf_results, adult.data.test$attributes)) %>% 
+  `colnames<-`(c("ANN","SVM","RF"))
+```
+
+#### 8. Comparing.
+
+Overall, the best model is randomForest. In fact, the compiling time for me is ANN(3hidden) > ANN(2hidden) > RF > SVM > ANN(1hidden). Obviously, RF is the best choice either from accuracy or time aspects.
+
+### 9. Regularization:
+
+"Regularization refers to techniques that are used to calibrate machine learning models in order to minimize the adjusted loss function and prevent overfitting or underfitting." -- Simplilearn 
+
+https://www.simplilearn.com/tutorials/machine-learning-tutorial/regularization-in-machine-learning
+
+# Q2:
+
+### Loading data
+
+```{r}
+df <- read_csv("/Users/jiamingxu/Library/CloudStorage/OneDrive-NortheasternUniversity/Spring 2022/DA5030/Wholesale customers data.csv")
+```
+
+There are 8 numeric columns.
+
+```{r}
+summary(df)
+```
+
+No missing values.
+
+```{r}
+sum(is.na(df))
+```
+
+Train kmeans model:
+
+```{r}
+# scale df
+dfs <- as.data.frame(lapply(df,scale))
+set.seed(7)
+ws_cluster_3 <- kmeans(dfs, 3)
+
+find_tot_withiness <- function(n){
+  ws_cluster_n <- kmeans(dfs, n)
+  return (ws_cluster_n$tot.withinss)
+}
+
+find_tot_withiness(n=8)
+
+totw <- sapply(1:15, find_tot_withiness)
+elbow <- tibble(1:15,totw)
+elbow %>% 
+  ggplot(aes(x = `1:15`,y=totw)) +
+  geom_point()
+```
+
+From the elbow graph above we can see, the elbow point of total within-cluster sum of squares as a function of k is k = 7. Therefore, k = 7 should be the best choice. However, 6 or 7 can both be the elbow point, use silhouette to further determine which is the optimal point.
+
+#### silhouette
+
+```{r}
+set.seed(7)
+library(cluster)
+silhouette_score <- function(x){
+  return (mean(silhouette(x, dist(dfs))[,3]))
+}
+ws_sil_score <- sapply(2:10, function(y){
+  ws_kn <- kmeans(dfs, y)
+  silhouette_score(ws_kn$cluster)
+  }) 
+
+tibble(2:10,ws_sil_score ) %>% 
+  ggplot( aes(x = `2:10`, y = ws_sil_score, group = 1)) +
+  geom_line() +
+  geom_point( color = 'red')
+```
+
+From figure above we can see scores are zig-zag between 2-9. Score is the highest when k = 7 from 4-7, therefore k = 7 is picked for this problem.
+
+
+```{r}
+set.seed(2)
+ws_k7 <- kmeans(dfs, 7)
+ws_k7$centers
+```
+
+
+```{r}
+library(RColorBrewer)
+hm.palette <-colorRampPalette(rev(brewer.pal(10, 'RdYlGn')),space='Lab')
+center_df <- data.frame(cluster=1:7,ws_k7$center)
+center_df %>% 
+  pivot_longer(cols = -cluster,
+               names_to = 'type',
+               values_to = 'value') %>%
+  ggplot(aes(x = type, y = cluster, fill = value)) +
+    scale_y_continuous(breaks = seq(1, 7, by = 1)) +
+    geom_tile() +
+    coord_equal() +
+    scale_fill_gradientn(colours = hm.palette(70)) +
+    theme_classic() +
+    coord_flip()
+```
+
+From heat map above we can see group 5 is extremely interesting that it includes the most Delicassen compared to others, and Frozen amd milk. We may say that this group people wouldn't like to cook meals by themselves.
+
+Since 16 is really an outlier in our heatmap, I replace it by the mean value in Delicassen for group 5 for better visualization.
+
+```{r}
+center_df2 <- center_df
+center_df2[5,9] <- mean(center_df2[,9])
+center_df2 %>% 
+  pivot_longer(cols = -cluster,
+               names_to = 'type',
+               values_to = 'value') %>%
+  ggplot(aes(x = type, y = cluster, fill = value)) +
+    scale_y_continuous(breaks = seq(1, 7, by = 1)) +
+    geom_tile() +
+    coord_equal() +
+    scale_fill_gradientn(colours = hm.palette(70)) +
+    theme_classic() +
+    coord_flip()
+```
+
+Beside group 5, group 7 shows higher values than the others. Group 7 like Milk, grocery and detergents_paper. This might means that people like house keeping.
+
+Group 2 is for people buy in Lisbon. Group 2 and 6 are nearly identical except the region, that means people bought identical goods at different stores. 
+
+Group 3 and Group 4 are reversed in their buying hobbits - almost.
+
+3 groups for Horeca and 4 groups for Retail.
+

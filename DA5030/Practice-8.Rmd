@@ -1,0 +1,144 @@
+---
+title: "DA5030 Practice 8"
+author: "Jiaming Xu"
+date: "Mar 30, 2022"
+output:
+  html_document:
+    df_print: paged
+---
+
+# 1 - K-means
+
+```{r}
+library(tidyverse)
+
+# SNSdata was imported from github
+teens <- read_csv("https://raw.githubusercontent.com/stedy/Machine-Learning-with-R-datasets/master/snsdata.csv")
+```
+
+Summary info of teens dataset. 30,000 observations with 40 variables.
+
+```{r}
+str(teens)
+```
+
+There are 4 folds of female than male in this data set with 2724 missing genders.
+
+```{r}
+table(teens$gender, useNA = 'ifany')
+```
+
+Summary results are identical to the textbook. Maximum age is 106.927 with 18.3
+as 3rd quartile, there are several outliers in this dataset. Same as the lower
+age end. 5086 missing age info in this data set.
+
+```{r}
+summary(teens$age)
+```
+
+Replace ages younger than 13 or older than 20 as missing values for data preperation.
+
+```{r}
+teens$age <- ifelse( teens$age >= 13 & teens$age < 20,
+                      teens$age, NA)
+```
+
+## 2. Data preparation - dummy coding missing values.
+
+I tried to use spread function to create dummy codes, but it didn't work since there are duplicated rows in this data set. Therefore I use ifelse here.
+
+Missing gender information should be kept since teens may not treat themselves as a traditional gender.
+
+```{r}
+teens$female <- ifelse(teens$gender == "F" &
+                           !is.na(teens$gender), 1, 0)
+teens$no_gender <- ifelse(is.na(teens$gender), 1, 0)
+table(teens$gender, useNA = 'ifany')
+table(teens$female, useNA = 'ifany')
+table(teens$no_gender, useNA='ifany')
+```
+
+## 3. Imputing the missing values
+
+From the summary of age variable we can see there are 5086 missing observations, with mean ~ 18 year-old.
+
+```{r}
+summary(teens$age)
+```
+
+Aggregate function can be use for applying a function to each group of gradyear of students. This is the same as using group_by and mean function in pipe.
+
+```{r}
+aggregate(data = teens, age ~ gradyear, mean, na.rm = TRUE)
+```
+
+How to replace the missing value with the average age in each gradyear is wise. ave_age vector contains avrage age in each group and is applied to ifelse function to replace missing values.
+
+```{r}
+ave_age <- ave(teens$age, teens$gradyear, FUN =
+                  function(x) mean(x, na.rm = TRUE))
+teens$age <- ifelse(is.na(teens$age), ave_age, teens$age)
+summary(teens$age)
+```
+
+## 3. training a model on the data
+
+Scale function is used for shifting the mean of data to 0. The reason by doing this is because the output of K-means contains COG position coordinates. It's easier to understand where the COG point is if all data is evenly distributed in each variable. Like hour rectangular coordinates, the origin is (0,0), same idea for k-means.
+
+```{r}
+library(stats)
+interests <- teens[5:40]
+interests_z <- lapply(interests, scale) %>% as.data.frame()
+summary(interests$basketball)
+summary(interests_z$basketball)
+```
+
+```{r}
+RNGversion("3.5.2")
+set.seed(2345)
+teen_clusters <- kmeans(interests_z, 5)
+```
+
+The kmeans function performs k-means clustering on a data matrix, with four algorithms available - Hartigan-Wong, Lloyd, Forgy, and MacQueen. number of clusters can be defined right after the input data or centers. The centers argument can be either given by a single number which indicates number of clusters, or initial center positions of clusters.
+
+## 4. Evaluating model performance
+
+The size of each cluster can be retrieved from teen_clusters\$size. The smallest is 600, the largest is 21514. More detailed center information can be examined by teen_cluster\$centers. Positive values mean above average, vice versa.
+
+```{r}
+set.seed(2345)
+teen_clusters$size
+teen_clusters$centers[,1:19]
+```
+
+There are 5 observations indicating 5 groups from the results above. A more positive number means this group is outstanding for the field of this variable.
+
+For example for group 3, all individual sports, cute, dance are above other groups. We may say group 3 is students who are good at sports.
+
+For group 4, sex, kissed, and sports are at a leading position. We may say students in group 4 are really good at these variables.
+
+## 5. Improving data
+
+Since kmeans is not used for prediction (it can be but not in this textbook), how to improve data is more like how do we interprate these data. For example in the results shown below, average in different groups are nearly the same. Majority of students are between 15-19.
+
+```{r}
+teens$cluster <- teen_clusters$cluster
+teens[1:5, c("cluster", "gender", "age", "friends")]
+aggregate(data = teens, age ~ cluster, mean)
+```
+
+However for other perspectives, female ratio in different groups are quite different. Group 5 has more ratio of male than other groups especially group 1, 3, and 4.
+
+```{r}
+aggregate(data = teens, female ~ cluster, mean)
+```
+
+From other perspectives, group 1 has the most friends among 5 groups, and group 5 has the least. This may indicate that the male high school students have less friends than female.
+
+```{r}
+aggregate(data = teens, friends ~ cluster, mean)
+```
+
+
+
+

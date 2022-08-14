@@ -1,0 +1,470 @@
+---
+title: "Practicum 2"
+author: "Jiaming Xu"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+# Problem 1:
+
+### 1 & 2:
+
+```{r, message=FALSE}
+library(tidyverse)
+library(klaR)
+library(gmodels)
+library(broom)
+library(psych)
+```
+
+Loading data from the local file since url needs update every time for accessing:
+
+```{r}
+df <- read.csv("german.csv")
+glimpse(df)
+summary(df)
+```
+
+### 3:
+
+Since default variable only has 1 and two, I can use ifelse to replace 1 with 'good', 2 with 'bad'.
+
+```{r}
+unique(df$default)
+df1 <- mutate(df, default = ifelse(default == 1, "Good", "Bad"))
+```
+
+### 4:
+
+Fix seed as 7, make index for train. df1_train and df1_test contain same ratio of good/bad.
+
+```{r}
+set.seed(7)
+train <- sample(nrow(df1), floor(0.7*nrow(df1))) 
+df1_train <- df1[train, ]
+df1_test <-  df1[-train, ]
+table(df1_train$default)
+table(df1_test$default)
+
+```
+
+### 5:
+
+1. Select Status of existing checking account (1), Credit history (3), Purpose (4), Credit amount (5), Installment rate in percentage of disposable income (8), Personal Status (9), Property (12), Age (13), Number of existing credits at this bank (16) and Job (21), save new data frame as df2.
+
+2. Change age and amount variable to categorical using cut function. 6 bins for age and 5 bins for amount variable. Change installment_rate and existing_credits as factor.
+
+3. Divide df2_lgr into train and test subsets, use NaiveBayes function to predict, save to default.nb.
+
+4. Get prediction results as vector using predict function.
+
+```{r, warning=FALSE}
+df2 <- df1[, c(1,3,4,5,8,9,12,13,16,17,21)] 
+
+df2_lgr <- df2 %>% 
+  mutate( age = cut(age, breaks = 6, labels = c(1,2,3,4,5,6))) %>% 
+  mutate( amount = cut(amount, breaks = 5, labels = c(1,2,3,4,5))) %>% 
+  mutate( installment_rate = factor(installment_rate)) %>% 
+  mutate( existing_credits = factor(existing_credits))
+
+df2_train <- df2_lgr[train, ]
+df2_test <- df2_lgr[-train, ]
+
+default.nb <- NaiveBayes(factor(default) ~ ., data = df2_train )
+
+predict.nb <- predict(default.nb, df2_test[, -10])
+```
+
+### 6:
+
+Using CrossTable to build up a confusion matrix. 55 FP and 20 FN, 225 correct prediction over 300 testing set, overall 75% accuracy. 55 FP is relatively high to put bank at risk if lending money to risky users.
+
+```{r}
+CrossTable(predict.nb$class, df2_test$default, dnn = c('predicted','actual'))
+```
+
+### 7:
+
+1. Change Good to 1, Bad to 0 for applying logistic regression
+
+2. Define train and test subsets.
+
+3. Use glm function to apply Logistic Regression, using binomial regression.
+
+4. Take a look of prediction results.
+
+```{r}
+df3 <- df2 %>% 
+  mutate( default = ifelse( default == 'Bad', 0, 1))
+
+df3_train <- df3[ train,]
+df3_test <- df3[ -train,]
+
+default.lr <- glm(default ~ ., data = df3_train, family = 'binomial')
+table(augment(default.lr, newdata = df3_test, type.predict = 'response')$.fitted > 0.5)
+table(df3_test$default)
+```
+
+### 8:
+
+1. Use augment with type.predict = 'response' to get response variable prediction, then use ifelse to make results as binomial variables.
+
+2. Use CrossTable to generate the confusion table.
+
+The results show that the overall accuracy is 224/300 ~ 75% which is identical to NaiveBayes prediction. Also similar as NaiveBayes, FP = 59 among testing dataset which is also worth to consider.
+
+```{r}
+default.lr.prediction <- ifelse(augment(default.lr, newdata = df3_test, type.predict = 'response')$.fitted > 0.5, 1, 0)
+CrossTable(default.lr.prediction, df3_test$default, dnn = c('predicted','actual'))
+```
+
+
+### 9, 10:
+
+Decision Tree can only applied to categorical variables, while regression tree and model trees can be applied to continuous variables. However, regression tree do not use linear regression methods they make predictions based on the average value of examples that reach a leaf. Therefore, continuous variables are used for regression trees, and categorified data used for decision trees.
+
+In my opinion, these two trees don't have too many differences therefore provide similar accuracy. The advantage of regression tree is categorification of continuous data is not necessary, therefore I prefer regression tree for less data preparation process.
+
+```{r}
+library(rpart)
+library(C50)
+
+default.rp <- rpart(default ~ ., data = df2[train, ])
+default.c50 <- C5.0(factor(default) ~. , data = df2_lgr[train, ])
+
+predict.rp <- predict(default.rp ,df2[-train, ])
+predict.c50 <- predict(default.c50, df2_lgr[-train, ])
+```
+
+### 11:
+
+CrossTable is used here. As we can see, two trees don't give different predictions, regression trees provide silightly better results.
+
+```{r}
+CrossTable(ifelse(predict.rp[,1] > .5, 'Bod', "Good"), df2_lgr[-train, ]$default)
+CrossTable(predict.c50, df2_lgr[-train, ]$default)
+```
+
+
+### 12:
+
+1. Build getmode function and predictCreditRisk function. predictCreditRisk can take dataset as input.
+
+2. Decide the final prediction by finding the mode of three predictions.
+
+```{r, warning=FALSE}
+getmode <- function(v) {
+   uniqv <- unique(v)
+   uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+
+predictCreditRisk <- function(x){
+  x.lgr <- x
+  
+  # turn age and amount to categorical variables by using bins predefined. For
+  # categorical functions NaiveBayes and rpart.
+  age.bins <- seq(18.9, 75.1, length.out=7)
+  amount.bins <- seq(min(df2$amount), max(df2$amount), length.out=6)
+  
+  x.lgr$age <- factor(sapply(x$age, function(x){sum(x > age.bins)}))
+  x.lgr$amount <- factor(sapply(x$amount, function(x){sum(x > amount.bins)}))
+  
+  x.lgr <- x.lgr %>% 
+    mutate(installment_rate = factor(installment_rate)) %>% 
+    mutate(existing_credits = factor(existing_credits))
+    
+  set.seed(7)
+  predict.nb <- predict(default.nb, x.lgr)$class %>% as.character()
+  predict.rp <- ifelse(predict(default.rp, x)[,1 ] > .5,
+                       'Bad', 'Good') %>% as.character()
+  predict.c50 <- predict(default.c50, x.lgr) %>% as.character()
+  predict.all <- cbind(predict.nb,predict.rp,predict.c50)
+  apply(predict.all,1, getmode)
+}
+
+predictCreditRisk(df2[1:10,])
+```
+
+### 13:
+
+Assuming amount = 5000, installment_rate = 1, age = 47, other missing info replaced by the mode of that variable. Prediction shows this user is good for a loan.
+
+```{r}
+new_obj <- data.frame( 'age' = 47, 'personal_status' = 'single male', 
+                       'credit_history' = 'critical', 'property' = "real estate", 
+                       'purpose' = 'car (new)', 'checking_balance' = 'unknown',
+                       'amount' = 5000, 'installment_rate' = 1, 'existing_credits' = getmode(df2$existing_credits), 'job' = getmode(df2$job))
+
+predictCreditRisk(new_obj)
+```
+
+
+# Problem 2:
+
+### 1:
+
+1. Loading data, select all continuous variables and two categorical variables, num_of_doors and num_of_cylinders. 
+
+2. Replace missing values by NA. Change the name of variables. Change written number to numeric of number_of_doors and num_of_cylinders. Change all columns to numeric type.
+
+```{r}
+df <- read_csv("https://archive.ics.uci.edu/ml/machine-learning-databases/autos/imports-85.data", col_names = FALSE)
+cars.df <- df[, c(2,6,10:14,16,17,19:26)]
+colnames(cars.df) <- c("normalized-losses", "num_of_doors", "wheel-base", 
+                       "length","width","height","curb-weight","num_of_cylinders",
+                       "engine-size","bore","stroke","compression-ratio","horsepower",
+                       "peak-rpm","city-mpg","highway-mpg","price")
+cars.df[cars.df == '?'] <- NA
+cars.df <- cars.df %>% 
+  mutate( num_of_cylinders = str_replace_all(num_of_cylinders,
+                                             c("two"='2',"three"='3',"four"='4',
+                                               "five"='5', "six" = '6', 
+                                               "eight"='8', "twelve"='12'))) %>% 
+  mutate( num_of_doors = str_replace_all(num_of_doors, c("two"='2',"four"='4')))
+
+cars.df <- sapply(cars.df, as.numeric) %>% as_tibble()
+glimpse(cars.df)
+```
+
+### 2:
+
+Outliers are detected by 3 times larger than z value for price and length variables.
+
+Variables of outliers were determined by three highest correlation yield from AIC backward elimination, they are curb-weight, width, hoursepower, and num_of_cylinders.
+
+```{r}
+step(lm(price ~ . , data = drop_na(cars.df)), direction = 'backward',   trace = 0) %>% summary()
+
+cars.no.df <- cars.df %>% 
+  mutate( z = (price - mean(price, na.rm=T))/sd(price, na.rm = T) ) %>% 
+  filter( abs(z) <= 3) %>% 
+  mutate( z = (width - mean(width, na.rm=T))/sd(width, na.rm = T) ) %>% 
+  filter( abs(z) <= 3) %>%   
+  mutate( z = (`curb-weight` - mean(`curb-weight`, na.rm=T))/sd(`curb-weight`, na.rm = T) ) %>% 
+  filter( abs(z) <= 3) %>%   
+  mutate( z = (num_of_cylinders - mean(num_of_cylinders, na.rm=T))/sd(num_of_cylinders, na.rm = T) ) %>% 
+  filter( abs(z) <= 3) %>% 
+  mutate( z = (horsepower - mean(horsepower, na.rm=T))/sd(horsepower, na.rm = T) ) %>% 
+  filter( abs(z) <= 3) %>% 
+  dplyr::select( -z)
+```
+
+### 3:
+
+The dataset is too large to make output of pairs.panels visible, so I divided into to figures.
+
+Prices have a strong correlation with wheel-base, length, width,curb-weight,num_of_cylinder, engine_size, highway-mpg, city-mpg,hoursepower, and bore. Some of them are not independent, such as highway-mpg, city-mpg, hoursepower, num_of_cylinder, etc. Also, bore and stroke also related with each other.
+ 
+```{r}
+pairs.panels(cars.no.df[, c(1:9,17)])
+pairs.panels(cars.no.df[, c(10:17)])
+```
+
+highway-mpg and city-mpg looks like inverse relationship with price. And in the figure below we can see price is linear relationship with reciprocal of highway-mpg and city-mpg.
+
+width and length looks like have an logarithm relationship with price, so make exponential of normalized width and length. results show a better linear relationship.
+
+```{r}
+pairs(cbind(cars.no.df[,'price'], 1/cars.no.df[,'highway-mpg'], 1/cars.no.df[,'city-mpg']))
+pairs(cbind(exp(cars.no.df[,'length']/15), exp(cars.no.df[,'width']/15), (cars.no.df[, 'price'])))
+cars.tx <- cars.no.df %>% 
+  mutate( `highway-mpg` = 1/`highway-mpg`) %>% 
+  mutate( `city-mpg` = 1/ `city-mpg`) %>% 
+  mutate( width = exp(width/5)) %>% 
+  mutate( length = exp(length/15))
+
+pairs.panels(cars.tx[, c(10:17)])
+pairs.panels(cars.tx[, c(1:9,17)])
+
+```
+
+Now the panels are linearized.
+
+### 4:
+
+There are many collinearities in this dataset. For example, length~curb-weight = 0.87129108,
+length~width=0.83833846, engine-size~curb-weight=0.88862611, highway-mpg~hoursepower = 0.88862611.
+
+```{r}
+cor(x = cars.no.df, use='complete.obs')
+```
+
+### 5:
+
+The sample is applied to each dataset separately since they don't have the same number of rows, then dividing them into train and test subsets.
+
+```{r}
+set.seed(7)
+train <- sample(nrow(cars.df), 0.7*nrow(cars.df))
+train.no <- sample(nrow(cars.no.df), 0.7*nrow(cars.no.df))
+train.tx <- sample(nrow(cars.tx), 0.7*nrow(cars.tx))
+
+cars.training <- cars.df[train,]
+cars.testing <- cars.df[-train,]
+cars.no.training <- cars.no.df[train.no,]
+cars.no.testing <- cars.no.df[-train.no,]
+cars.tx.training <- cars.tx[train.tx,]
+cars.tx.testing <- cars.tx[-train.tx,]
+```
+
+### 6:
+
+I made a backward p value elimination function for "lm" or "glm" functions called lm_backelimq(), which prune variables with p values greater than specific value (default is 0.1).
+
+Also, I used step() function for AIC backward elimination. Rows containing NA are removed since step function requries the structure of data set at constant during backward prune process.
+
+```{r}
+set.seed(7)
+
+cars.training <- drop_na(cars.training)
+cars.no.training <- drop_na(cars.no.training)
+cars.tx.training <- drop_na(cars.tx.training)
+
+cars.testing <- drop_na(cars.testing)
+cars.no.testing <- drop_na(cars.no.testing)
+cars.tx.testing <- drop_na(cars.tx.testing)
+
+
+lm_backelimq <- function(x_train, keep = FALSE, loop = 10, trace = 1, p = 0.1){
+  test <- x_train
+  x.lm <- lm(formula = price ~ . , data = test)
+  for (q in 1:loop) {
+    n = 1
+    if (trace == 1) {
+      print(q)
+      print(summary(x.lm)$coefficients)
+    }
+    lm.summary <- summary(x.lm)$coefficients[, 4]
+    p.to.drop <- names(sort(lm.summary, decreasing = TRUE))[n]
+    ## Jump to second or third highest p value if highest is in keep input.
+    while(any(p.to.drop == keep)){
+      n = n + 1
+      p.to.drop <- names(sort(lm.summary, decreasing = TRUE))[n]
+    }
+  
+    if ( lm.summary[p.to.drop] > p ) {
+      p.to.drop <- str_remove_all(p.to.drop, '`')
+      test <- dplyr::select(test, -p.to.drop)
+    }
+    x.lm <- lm(formula = price ~ . , data = test)
+  }
+  x.lm
+}
+
+cars.lm.p <- lm_backelimq(cars.df, trace = 0, p = 0.05, loop = 20)
+cars.no.lm.p <- lm_backelimq(cars.no.df, trace = 0, p = 0.05, loop = 20)
+cars.tx.lm.p <- lm_backelimq(cars.tx, trace = 0 , p = 0.05, loop = 20)
+
+## draft
+
+cars.lm.aic <- step(lm(price ~ . , data = cars.training), direction = 'backward',   trace = 0)
+cars.no.lm.aic <- step(lm(price ~ ., data = cars.no.training), direction = 'backward',   trace = 0)
+cars.tx.lm.aic <- step(lm(price ~ ., data = cars.tx.training), direction = 'backward',   trace = 0)
+```
+
+\newpage
+
+### 7:
+
+Build a Regression Tree model using rpart package for predicting price: one with cars.training, one with cars.no.training, and one with cars.tx.training.
+
+```{r}
+set.seed(7)
+cars.rp <- rpart(price ~ ., data = cars.df)
+cars.no.rp <- rpart(price ~ ., data = cars.no.df)
+cars.tx.rp <- rpart(price ~ ., data = cars.tx)
+```
+
+### 8:
+
+#### Pridiction evaluation:
+
+Mean absolute scaled error (MASE) decreased when outliers removed, and further decreased after data linear normalization. Adjusted R squared only defined for linear regression models.
+
+```{r}
+set.seed(7)
+MASE <- function(x, y){
+  return (sum(abs(x - y))/(length(y)-1))
+}
+
+RMSE <- function(x, y){
+  return ( sqrt( mean( (x - y) ^2)))
+}
+
+summary_table <- tibble( 'ARS' = c(summary(cars.lm.p)$adj.r.squared, summary(cars.no.lm.p)$adj.r.squared,
+                       summary(cars.tx.lm.p)$adj.r.squared, summary(cars.lm.aic)$adj.r.squared,
+                       summary(cars.no.lm.aic)$adj.r.squared, summary(cars.tx.lm.aic)$adj.r.squared,
+                       NA,NA,NA),
+             'MASE' = c(MASE(predict(cars.lm.p, newdata = cars.testing), cars.testing$price),
+                        MASE(predict(cars.no.lm.p, newdata = cars.no.testing), cars.no.testing$price),
+                        MASE(predict(cars.tx.lm.p, newdata = cars.tx.testing), cars.tx.testing$price),
+                        MASE(predict(cars.lm.aic, newdata = cars.testing), cars.testing$price),
+                        MASE(predict(cars.no.lm.aic, newdata = cars.no.testing), cars.no.testing$price),
+                        MASE(predict(cars.tx.lm.aic, newdata = cars.tx.testing), cars.tx.testing$price),
+                        MASE(predict(cars.rp, newdata = cars.testing), cars.testing$price),
+                        MASE(predict(cars.no.rp, newdata = cars.no.testing), cars.no.testing$price),
+                        MASE(predict(cars.tx.rp, newdata = cars.tx.testing), cars.tx.testing$price)),
+             'RMSE' = c(RMSE(predict(cars.lm.p, newdata = cars.testing), cars.testing$price),
+                        RMSE(predict(cars.no.lm.p, newdata = cars.no.testing), cars.no.testing$price),
+                        RMSE(predict(cars.tx.lm.p, newdata = cars.tx.testing), cars.tx.testing$price),
+                        RMSE(predict(cars.lm.aic, newdata = cars.testing), cars.testing$price),
+                        RMSE(predict(cars.no.lm.aic, newdata = cars.no.testing), cars.no.testing$price),
+                        RMSE(predict(cars.tx.lm.aic, newdata = cars.tx.testing), cars.tx.testing$price),
+                        RMSE(predict(cars.rp, newdata = cars.testing), cars.testing$price),
+                        RMSE(predict(cars.no.rp, newdata = cars.no.testing), cars.no.testing$price),
+                        RMSE(predict(cars.tx.rp, newdata = cars.tx.testing), cars.tx.testing$price)),
+                                     
+             ) %>% as.data.frame()
+rownames(summary_table) <- c('p_elim_df', 'p_elim_no', 'p_elim_tx',
+                 'aic_elim_df', 'aic_elim_no', 'aic_elim_tx',
+                 'reg_tree_df', 'reg_tree_no', 'reg_tree_tx')
+summary_table
+```
+
+Overall results are shown above. P value eliminations yield smaller Adj. R squared, means p elimination didn't do a better job than AIC elimination. Among three type of datasets (cars.df, cars.no.df, cars.tx), cars.tx shows smaller errors for linear regression predictions, but dataframe without outliers yield a better performance for Regression Tree.
+
+Regression Trees did a better job than p_elimination and AIC elimination multivariable linear regressions on original and outliers removed datasets. AIC backward elimination yeilds a better results than Regression Tree on cars.tx dataset.
+
+In general, Regression Tree yield a better prediction than multi-linear-regressions on less-processed datasets. AIC backward eliminated linear model did a better job than Regression Tree since four non-linear variables were manipulated to linear relationships with target - price. Also, there's no need to linearize dataset for Regression Tree.
+
+### 9:
+
+Use all features as inputs for multivariable linear regression.
+
+```{r}
+set.seed(7)
+cars.lm <- lm( price ~ ., data = cars.df)
+cars.no.lm <- lm( price ~ ., data = cars.no.df)
+cars.tx.lm <- lm( price ~ ., data = cars.tx)
+```
+
+```{r}
+summary(cars.lm)
+summary(cars.tx.lm)
+```
+
+For linear regression on cars.df, price will increase 3.116 or decrease 1.755 when 'highway-mpg' or 'city-mpg' increasing one unit with other variables keep fixed, respectively. No differences between cars.df and outliers removed. For cars.tx, price will increase 4.685e+04 or 5.582e+04 when 'highway-mpg' or 'city-mpg' increasing one unit with other variables keep fixed, respectively. 
+
+
+### 10:
+
+```{r}
+set.seed(7)
+cars.lm <- augment(cars.lm.aic, newdata = cars.testing)
+cars.no.lm <- augment(cars.no.lm.aic, newdata = cars.no.testing)
+cars.tx.lm <- augment(cars.tx.lm.aic, newdata = cars.tx.testing)
+```
+
+```{r}
+sprintf("AIC eliminated cars.df has 95%% Interval Prediction $%.2f +/- %.2f",mean(cars.lm$.fitted), 1.96*sd(cars.lm$.resid))
+```
+
+```{r}
+sprintf("AIC eliminated cars.no.df has 95%% Interval Prediction $%.2f +/- %.2f",mean(cars.no.lm$.fitted), 1.96*sd(cars.no.lm$.resid))
+```
+
+```{r}
+sprintf("AIC eliminated cars.tx has 95%% Interval Prediction $%.2f +/- %.2f",mean(cars.tx.lm$.fitted), 1.96*sd(cars.tx.lm$.resid))
+```

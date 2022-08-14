@@ -1,0 +1,150 @@
+---
+title: "Assignment 5"
+author: "Jiaming Xu"
+date: "2/14/2022"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(XML)
+library(httr)
+if (!require('countrycode', character.only = TRUE)){
+    install.packages(x, dependencies = TRUE)
+    library(x)
+    }
+```
+
+## Q1:
+
+Since package "RCurl" doesn't perform reasonable on both macOS and Windows, therefore I use GET function in httr package for retrieving xml website. Then, use xlmParse and xmlToDataFrame functions converted it into a tibble. The last row of this tibble is actually containing only NAs, so I dropped it. Display the dimensions by dim function.
+
+```{r}
+url <- "https://www.senate.gov/general/contact_information/senators_cfm.xml"
+xml_raw <- xmlParse(GET(url))
+xdf <- xmlToDataFrame(xml_raw) %>% as_tibble()
+xdf <- xdf[-101, ]
+dim(xdf)
+```
+
+
+## Q2:
+
+Create a new tibble for manipulation in this question. I use sapply and str_extract for applying regex on the first name column, by finding first several alphanumeric characters. This works since first name always placed at first. For lastnames, there's no need to modify them since there's absolutely no one will add any suffix into their last name.
+
+```{r}
+xdf_update <- xdf
+xdf_update[ ,3] <- sapply(xdf[ ,3], function(x) str_extract(x,'\\w+'))
+xdf_update
+```
+
+
+
+## Q3:
+
+create senatorsByState function. 
+
+1. examine if the input state abbreviation in state.abb data set.
+
+2. filter desired state infomation.
+
+3. Replace party abbreviation by full name.
+
+4. Unite last name and first name columns, first name first, last name second.
+
+5. Select fullname, party.full, and state columns for quicker manipulation.
+
+6. unite full name and party full name together, separated by ", ".
+
+7. unite two senators name together separated by " and ".
+
+8. print out using sprintf.
+
+```{r}
+senatorsByState <- function(x){
+  if(!(x %in% datasets::state.abb)) stop("Invalid input")
+  b <- xdf_update %>% 
+        filter( state == x) %>% 
+        mutate( party.full = str_replace_all( party, c('D' = "Democratic Party", "R" = "Republic Party", "I" = "Independent Party"))) %>% 
+        unite( fullname, 3:2, sep = ' ') %>% 
+        select( fullname, party.full, state) %>% 
+        unite( nnp, 1:2, sep = ', ') %>% 
+        pull( nnp) %>% 
+        paste( collapse = ' and ')
+  sprintf("The senators for %s are: %s.", x, b)
+}
+
+senatorsByState("MA")
+senatorsByState("TX")
+```
+
+
+##Q4:
+
+First import csv file and skip first 3 useless rows to a tibble called idf. 
+
+For indicator_data, deselect 3 columns then use pivot_longer to switch columns to rows for each country, then delete NAs. 
+
+For country_name, just select "Country Code" and "Country Name" columns then find unique rows.
+
+```{r}
+idf <- read_csv("Ratio Of Female To Male Youth Unemployment Rate .csv", skip = 3)
+indicator_data <- idf %>% 
+  select(-c('Country Name', 'Indicator Name', 'Indicator Code')) %>% 
+  pivot_longer(!"Country Code", names_to = 'year', values_to = 'value' ) %>% 
+  drop_na()
+country_name <- idf %>% 
+  select( `Country Code`, `Country Name`) %>% 
+  unique()
+```
+
+## Q5:
+
+1. Create a vector contains 15 country names.
+
+2. Find indeces of these 15 countries in country_lists.
+
+3. Use countrycode function to find the continent of each country. For plotting.
+
+4. Create a dictionary called continent_dict to find continents, then rename columns for joining.
+
+5. Use left_join twice to join country_name, indicator_data, and continent_dict together.
+
+6. Plot using ggplot, face_wrap to show trends by country and grouped by continents.
+
+From the plots we can see that overall European countries we picked have the most balanced female-male empolyment. China, India, and Japan are better than Tailand and Singapore. Kenya and South Africa are better than other three Africa countries. Overall, European countries show the best female-male empolyment ratio, Asia second. Africa exhibits the most imbalanced gender ratio employment both quantitatively and qualitatively.
+
+```{r}
+country_lists = c("Egypt, Arab Rep.","South Africa","Nigeria", "Kenya", "Ethiopia",
+                 "China", "Japan", "India", "Thailand", "Singapore",
+                 "Germany", "France", "Italy", "Sweden", "Norway")
+
+
+country_idx <- sapply(country_lists, function(x) {
+    which( country_name$`Country Name` == x)
+})
+
+continent_lists <- countrycode(sourcevar = country_lists,
+                                 origin = "country.name",
+                                 destination = "continent")
+
+
+continent_dict <- as_tibble( cbind(country_lists, continent_lists)) %>% 
+    mutate( continent_lists = factor( continent_lists))
+
+    
+colnames(continent_dict) <- c("Country Name", "Continent")
+
+
+left_join(country_name[country_idx, ], indicator_data) %>% 
+    left_join( continent_dict) %>% 
+    ggplot() +
+        geom_line( mapping = aes(x = year, y = value, color = `Country Name`, group =1)) + 
+        facet_wrap( Continent ~ `Country Name`, nrow = 3)
+
+```
+
+

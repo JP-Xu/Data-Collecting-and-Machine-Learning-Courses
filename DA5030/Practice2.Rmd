@@ -1,0 +1,120 @@
+---
+title: "Practice 2"
+author: "Jiaming Xu"
+date: "1/29/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+## Q1:
+
+Find the outliers of muders, 1.5 SD from the mean, displace information of outliers
+
+```{r}
+murder.mean <- mean(USArrests$Murder)
+murder.sd <- sd(USArrests$Murder)
+USArrests %>% 
+  mutate( z = (Murder - murder.mean)/murder.sd) %>% 
+  filter( abs(z) > 1.5)
+```
+
+## Q2:
+
+plotting urban population and murder to visualize relationship. In the figure we can see there's no such a trend that murder increases as increasing urban population. Also the Pearson coefficient is very close to 0, which means there's nearly not correlation between urban population and murder.
+
+```{r, echo = FALSE}
+ggplot( data = USArrests) +
+  geom_point( mapping = aes( x = UrbanPop, y = Murder))
+
+print(cor( USArrests$UrbanPop, USArrests$Murder))
+```
+
+## Q3:
+
+2-year weighted moving average:
+
+```{r}
+brazil <- read_csv("Brazil.csv")
+pre1 <- brazil
+pre1$pre_2yr <- 0
+pre1$pre_2yr[1:2] = pre1$Subscribers[1:2]
+pre1$pre_2yr[3: nrow(pre1)] = (pre1$Subscribers[2: (nrow(pre1) - 1)] * 5 +
+                                   pre1$Subscribers[1: (nrow(pre1) - 2)] * 2) / 7
+pre1$error <- pre1$Subscribers - pre1$pre_2yr
+pre1$sqrt <- pre1$error^2
+pre1
+```
+
+Exponential smoothing (alpha of 0.4):
+
+```{r}
+pre2 <- brazil
+pre2$es <- 0
+pre2$error <- 0
+pre2$es[1] = pre2$Subscribers[1]
+alpha <- 0.4
+
+for (i in 2:nrow(pre2)) {
+  pre2$es[i] <- pre2$es[i-1] + (alpha * pre2$error[i-1])
+  pre2$error[i] <-  pre2$Subscribers[i] - pre2$es[i]
+}
+pre2$sqrt <- (pre2$error)^2
+pre2
+```
+
+Linear regression trendline:
+
+```{r}
+pre3 <- brazil
+pre3$lm <- 0
+lm_coeff <- lm(pre3$Subscribers ~ pre3$Year)
+pre3$lm <- lm_coeff$coefficients[2] * pre3$Year + lm_coeff$coefficients[1]
+pre3$eror <-  pre3$Subscribers - pre3$lm
+pre3$sqrt <- (pre3$eror)^2
+pre3
+```
+
+## Q4:
+
+```{r}
+sqrt_errors <- tibble( sqer_2yr = sqrt(sum(pre1$sqrt)/ (length(pre1$sqrt[pre1$sqrt!=0]) - 1)), 
+                  sqer_es = sqrt(sum(pre2$sqrt)/ (length(pre2$sqrt[pre2$sqrt!=0]) - 1)),
+                  sqer_lm = sqrt(sum(pre3$sqrt)/ (length(pre3$sqrt[pre3$sqrt!=0]) - 1)))
+sqrt_errors
+```
+
+Linear model has the smallest MSE.
+
+## Q5:
+
+Weighted average forecase:
+
+```{r}
+predict_summary <- bind_cols(pre1$Year, pre1$pre_2yr, pre2$es, pre3$lm)
+colnames(predict_summary) <- c("Year", "yr", "es", "lm")
+predict_summary$overall <- (4*predict_summary$yr + 2*predict_summary$es + predict_summary$lm)/7
+predict_summary
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

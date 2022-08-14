@@ -1,0 +1,148 @@
+---
+title: "DA 5020 Assignment 11"
+author: "Jiaming Xu"
+output:
+  html_document:
+    df_print: paged
+---
+
+## 1. Loading data
+
+```{r}
+library(tidyverse)
+df <- read_csv("diabetes.csv")
+summary(df)
+glimpse(df)
+sapply(df, function(x){sum(is.na(x))})
+```
+
+There are 9 columns containing numeric values. No missing values. Therefore, we can perform min-max normalization directly on the whole dataset.
+
+## 2. Normalization.
+
+1. Create a min-max normalization function.
+
+2. Using sapply to apply norma function to whole df.
+
+```{r}
+norma <- function(x){
+  (x-min(x))/(max(x)-min(x))
+}
+
+df.norm <- sapply(df, norma) %>% as.data.frame()
+```
+
+## 3. Split data into training/testing
+
+1. using sample function to pick indeces for 0.8*nrow(df) rows randomly.
+
+2. split data into two data frames.
+
+```{r}
+set.seed((7))
+train_sample_idx <- sample(1:nrow(df.norm), 0.8*nrow(df.norm), replace = FALSE)
+train_sample <- df.norm[train_sample_idx, -9]
+test_sample <- df.norm[-train_sample_idx, -9]
+train_sample_label <- df.norm[train_sample_idx, 9]
+test_sample_label <- df.norm[-train_sample_idx, 9]
+```
+
+
+## 4. Create in house KNN function.
+
+my_kNN:
+
+1. create an empty modes_output vector for output.
+
+2. loop through each row in the test data set.
+
+3. inside loop: use sweep function to substract train data set by a row in the test data sett save to data set a. Then square the values in a, sort it, then take the indeces of the first k rows, to top_index. then use getMode function to find the most common value in of these indeces in train_labels. Append result into modes_output.
+
+```{r}
+getMode <- function(x) {
+    ## Took and modified from https://www.delftstack.com/howto/r/mode-in-r/.
+    u <- unique(x)
+    return (u[which.max(tabulate(match(x, u)))])
+}
+
+# Inputs: train data, test data, label of train data, and k.
+knn_predict <- function( train, test, cl, k){
+    modes_output <- vector()
+    for (i in 1:nrow(test)) {
+        a <- sweep( as.matrix(train), 2, as.matrix(test[i, ])) %>% as_tibble()
+        top_index <- sort(rowSums(a^2), index.return=T)$ix[1:k]
+        mode <- cl[top_index] %>% getMode()    
+        modes_output <- append(modes_output, mode)
+    }
+    return (modes_output)
+}
+
+```
+
+## 5. Analyze KNN result.
+
+How KNN works: 
+
+1. Looping each row in test sample, and subatract the train sample by each row in test sample.
+
+2. Calculate the sum of squared values in each row, then sort it ascending. The smaller the value, the moer near the points. Pick the indeces of top k smallest values.
+
+3. Finding the mode of the target of these k observations.
+
+4. Append to the output vector.
+
+```{r}
+library(gmodels)
+
+knn_4 <- knn_predict(train_sample, test_sample, train_sample_label, 4)
+CrossTable(knn_4, test_sample_label)
+knn_6 <- knn_predict(train_sample, test_sample, train_sample_label, 6)
+CrossTable(knn_6, test_sample_label)
+knn_8 <- knn_predict(train_sample, test_sample, train_sample_label, 8)
+CrossTable(knn_8, test_sample_label)
+```
+
+From results above we can see that knn performs better with a relatively larger k among 4,6,8.
+
+```{r}
+set.seed(7)
+acc_rate <- vector()
+for (k in 2:20) {
+  df_pred <-  knn_predict(train_sample, 
+                test_sample, 
+                train_sample_label, k= k)
+  acc_rate <- append(acc_rate, sum(df_pred == test_sample_label)/ length(test_sample_label))
+}
+
+ggplot( ) +
+  geom_line( mapping = aes(x = seq(2, 20), y = acc_rate)) +
+  geom_point( mapping = aes( x = seq(2, 20), y = acc_rate), color = 'red') +
+  labs( title = "Prediction accuracy as a function of k", x = 'k', y = 'Accuracy (%)') +
+  scale_y_continuous(labels = scales::percent)
+```
+
+From total accuracy above, we can see k = 7 provides the best performance. However, only overall performance are evaluated. In this diabetes study, we may want to minimize the false negative to save people's life. False negative means the actual outcome is 1 while our prediction is 0.
+
+```{r}
+
+false_negative <- function(pred_rst, real_rst){
+  sum((pred_rst == 0) & (real_rst == 1))
+}
+
+set.seed(7)
+fn_rate <- vector()
+for (k in 2:20) {
+  df_pred <-  knn_predict(train_sample, 
+                test_sample, 
+                train_sample_label, k= k)
+  fn_rate <- append(fn_rate, false_negative(df_pred, test_sample_label))
+}
+
+ggplot( ) +
+  geom_line( mapping = aes(x = seq(2,20), y = fn_rate)) +
+  geom_point( mapping = aes( x = seq(2, 20), y = fn_rate), color = 'red') +
+  labs( title = "Prediction accuracy as a function of k", x = 'k', y = 'Accuracy (%)')
+
+```
+
+If we want to minimize our false negative, we may want to use k = 3,4,10,11, or 12.

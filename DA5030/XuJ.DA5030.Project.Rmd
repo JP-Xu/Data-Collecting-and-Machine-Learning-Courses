@@ -1,0 +1,1060 @@
+---
+title: "DA 5030 Final Project"
+subtitle: "Chmeicals solubility prediction"
+author: "Jiaming Xu"
+date: "May 3rd, 2022"
+output:
+  html_document:
+    df_print: paged
+---
+
+Loading some packages...
+
+```{r, message=FALSE, warning=FALSE}
+packages = c("webchem", "tidyverse", "rjson","Cubist", "gmodels", "rminer",
+             "gmodels", "psych", "caret", "RCurl", "nnet")
+package.check <- lapply(
+  packages,
+  function(x) {
+    if (!require(x, character.only = TRUE)) {
+      install.packages(x, dependencies = TRUE)
+      library(x, character.only = TRUE)
+    }
+    else{
+     library(x, character.only = TRUE) 
+    }
+  }
+)
+```
+
+# CRISP-DM: Business Understanding.
+
+The goal of this work I proposed is to predict chemical solubility in water using only structure as input, searching/calculating relavent physi-chemical properties based on that structure. Since writting algorithms for properties of chemicals is beyond the scope of this class, I would search them on the PubChem website.
+
+The first step is collecting chemical properties of compounds we want to make prediction from PUG REST API provided by PubChem.
+File solubility.txt contains "compound ID", "experimental solubility", "ESOL predicted solubility" and "SMILEs". 
+Solubility.txt can only be downloaded by ftp since that's the only download method provided by UCI ChemDB.
+SMILEs are used for researching through PUG REST api. In theory, compound ID should also work. There are in total 1141 compounds in this dataset.
+
+For PUG REST api, chemical properties are converted to json format for ease. rjson package is used for retrieving data from json pages. For loop is used here for looping through all compounds. apply function can replace for loop here. Following properties are collected from json page:
+
+ [1] "cid"                           
+ [2] "IUPAC"                         
+ [3] "formula"                       
+ [4] "complicity"                    
+ [5] "hacceptor"                     
+ [6] "hdonor"                        
+ [7] "rotational"                    
+ [8] "logP"                          
+ [9] "molarmass"                     
+[10] "polararea"                     
+[11] "heavy_atom"                    
+[12] "atom_chiral"                   
+[13] "atom_chiral_def"               
+[14] "atom_chiral_undef"             
+[15] "bond_chiral"                   
+[16] "bond_chiral_def"               
+[17] "bond_chiral_undef"             
+[18] "isotope_atom"                  
+[19] "covalent_unit"                 
+[20] "tautomers"                     
+
+# CRISP-DM: Data Understanding and Preperation.
+
+Commented out lines collect necessary chemical and physical properties from PubChem weibsite, and for first time compiling only. 
+
+
+
+```{r, message=FALSE, warning=FALSE}
+### Only for the first data collection ###
+
+#df <- tibble()
+names.df <- read_csv("solubility.txt")
+#
+#for (x in 1:nrow(names.df)) {
+#  #com.name <- str_replace_all(names.df$`Compound ID`[x], " ", "%20")
+#  com.smiles <- str_replace_all(names.df$SMILES[x], "#", "%23")
+#  #name.url = paste0("https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/", #com.name, "/record/JSON")
+#  smiles.url = paste0("https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/",
+#         com.smiles, "/record/JSON")
+#  #t <- try(fromJSON(file = name.url))
+#  #if(inherits(t, "try-error")){
+#  #  t <- try(fromJSON(file = smiles.url))
+#  #  if(inherits(t, "try-error")){stop("Error")}
+#  #  else{phy.json <- fromJSON(file = smiles.url)}
+#  #}
+#  #else{phy.json <- fromJSON(file = name.url)}
+#  
+#  phy.json <- fromJSON(file = smiles.url)
+#  cid <- phy.json$PC_Compounds[[1]]$id$id$cid
+#  complicity <- phy.json$PC_Compounds[[1]]$props[[2]]$value$fval
+#  hacceptor <- phy.json$PC_Compounds[[1]]$props[[3]]$value$ival
+#  hdonor <- phy.json$PC_Compounds[[1]]$props[[4]]$value$ival
+#  rotate <- phy.json$PC_Compounds[[1]]$props[[5]]$value$ival
+#  IUPAC.name <- phy.json$PC_Compounds[[1]]$props[[7]]$value$sval
+#  logp <- phy.json$PC_Compounds[[1]]$props[[15]]$value$fval
+#  formula <- phy.json$PC_Compounds[[1]]$props[[17]]$value$sval
+#  molar.mass <- phy.json$PC_Compounds[[1]]$props[[18]]$value$sval
+#  polar.a <- phy.json$PC_Compounds[[1]]$props[[21]]$value$fval
+#  count.prop <- phy.json$PC_Compounds[[1]]$count
+#  
+#  m.prop <- as.list(c("cid"=cid, "IUPAC" = IUPAC.name, "formula" = formula,
+#                      "complicity" = complicity, "hacceptor" = hacceptor,
+#                      "hdonor" = hdonor, "rotational" = rotate, "logP" = logp,
+#                      "molarmass" = molar.mass, "polararea" = polar.a))
+#  df.individual <- as_tibble(c(m.prop, count.prop))
+#  df <- rbind(df, df.individual)
+#  if (x %% 50 == 0) {
+#    print(x)
+#  }
+#}
+
+
+### Save compound properties to dsv (dollar sign separated) file ###
+#write_delim(df, "compound_prop.dsv", delim = "$")
+
+### Load dataset ###
+df <- read_delim("compound_prop.dsv", delim = "$")
+df.all <- cbind(df, names.df[,2])
+names(df.all)[21] <- "solubility"
+
+### Accuracy of origin work
+### MAE
+sum(abs(names.df[,2] - names.df[,3]))/nrow(names.df)
+
+### RMSE
+sqrt(sum((names.df[,2] - names.df[,3])**2)/nrow(names.df))
+```
+
+Some thoughts for data collection:
+
+Since this chemical solubility dataset is fairly old (2004 and I didn't find newer one), all chemicals' properties are available online. In fact, these chemical properties are "computed" which means we still can "calculate" any missing values by using equations. This is cool. Another thought I had was crawling more chemicals from PubChem website. I searched several chemical database, it was not an easy work because many of them using JAVA script and don't support downloading. Especially for experimental results, I didn't figure out how to process website source. This is pretty unlucky. 
+
+
+
+Properties:
+
+ [1] "cid"                   Identifier from database of chemical molecules
+ 
+ [2] "IUPAC"                 IUPAC name      
+ 
+ [3] "formula"               formula
+ 
+ [4] "complicity"            complicity
+ 
+ [5] "hacceptor"             Number of hydrogen bond acceptor
+ 
+ [6] "hdonor"                Number of hydrogen bond donor
+ 
+ [7] "rotational"            Number of rotational bond
+ 
+ [8] "logP"                  Log of P. Indicating solubility ratio of polar/non-polar        
+ [9] "molarmass"             Molar mass        
+ 
+[10] "polararea"             Polar area
+
+[11] "heavy_atom"            Number of  heavy atoms
+
+[12] "atom_chiral"           Number of  chiral atom
+
+[13] "atom_chiral_def"       Number of  defined chiral atom
+
+[14] "atom_chiral_undef"     Number of  undefined chiral atom
+
+[15] "bond_chiral"           Number of chiral bond
+
+[16] "bond_chiral_def"       Number of defined chiral bond
+
+[17] "bond_chiral_undef"     Number of undefined chiral bond
+
+[18] "isotope_atom"          Number of isotope atoms         
+
+[19] "covalent_unit"         Number of covalent
+
+[20] "tautomers"             Number of tautomers.       
+
+[21] "measured log(solubility:mol/L)"
+
+So actually I'm pretty familiar with these properties, for example, logP is the most relevant properties since it describes how possible a chemical soluble in water compared to oil. Technically, a chemical with a large amount of hbond acceptors and donors would very likely be soluble in water since water is polar. Polar solutes are soluble in poar solvents. However, the number of h-bond acceptors and donors provides limited information - the ratio. Therefore, a new properties that describe the hbond acceptor and donor ratio of molar mass could be helpful. Therefore, I'd like to derive two new feature that are hdonor/molarmass and hacceptor/molarmass. In addition, the number of -OH function also could help predictions and can be calculated from SMILEs structure.
+
+### Freature engineering
+
+The reason I did feature engineering at the beginning of this work is because we'll normalize variables later, and I hope we can do that at once.
+
+For creating hbond acceptor and donor ratio variables:
+
+```{r}
+df.all <- df.all %>% 
+  mutate( hacceptor_ratio = hacceptor / molarmass) %>% 
+  mutate( hdonor_ratio = hdonor / molarmass)
+```
+
+For ratio of number of -OH,NH,P,S functional groups to carbon atoms in SMILEs structure:
+
+```{r}
+df.all <- df.all %>% 
+  mutate( cother = str_count(names.df$SMILES, '[OSPN]')/
+            str_count(names.df$SMILES, "[Cc]"))
+```
+
+Simply put, the larger the cother ratio, the easier the substance be desolved in water.
+
+#### PCA
+
+```{r}
+plot(df.all$logP, df.all$solubility)
+```
+
+From the relationship between logP and solubility we can see that there's a clear linear trend between them. However, the variance at lower loP end is high, therefore other features could help.
+
+# Data Exploration 
+
+MAE and RMSE functions are defined for ease of use.
+
+```{r}
+MAE <- function(x,y){
+  if(length(x)==length(y)){
+    mean(abs(x-y))
+  }
+}
+
+RMSE <- function(x,y){
+  if(length(x) == length(y)){
+  sqrt(mean((x - y)^2))
+  }
+}
+
+RSQ <- function(x,y){
+  cor(x,y) ^2
+}
+
+Overall_Error <- tibble("Model" = character(),
+                        "MAE" = numeric(),
+                        "RMSE" = numeric(),
+                        "RSQ" = numeric())
+```
+
+
+#### Exploring data collected.
+
+First, let's take a look at histogram of each variable. We can see, for most of these variables are distributed spreadly. However, frequency of atom_chiral_def and covalent_unit looks like a constant distribution. values in these two columns are the same, therefore, drop these two columns.
+
+Also, atom_chiral_undef, bond_chiral[def/undef], atom_chiral, and tautomers are highly left skewed. We can trate them as categorical/continuous variables as the range of each variable. For example, atom_chiral ranges from 0 - 20, we may trate it as continuous. For bond_chiral, it ranges from 0 to 2.0, therefore we trate it as categorical data.
+
+
+```{r}
+ggplot(gather(df.all[,-c(1,2,3)]), aes(value)) + 
+  geom_histogram( bins=10) +
+  facet_wrap(~key, scales = 'free')
+```
+
+Among those properties, atom_chiral_def, isotope_atom, and covalent_unit contain one values. Therefore drop these three columns for neat.
+
+```{r}
+# Drop atom_chiral_def and covalent_unit
+df_clean <- df.all %>% as_tibble() %>% select(-atom_chiral_def,-covalent_unit,
+                                              -isotope_atom)
+```
+
+<br/><br/>
+### Searching for any missing data from original work:
+
+```{r}
+sapply(names.df, function(x) { sum(is.na(x))})
+```
+
+No missing data in the original data. Now let's look at data I collected from website.
+
+```{r}
+glimpse(df.all)
+```
+
+Searching for missing values:
+
+```{r}
+sapply(df.all, function(x) sum(is.na(x)))
+```
+
+There are also no missing value for data I collected. Now, randomly drop 5% data as missing data.
+
+```{r}
+set.seed(7)
+missing_idx <- sample(1:nrow(df.all), 0.05*nrow(df.all))
+df.all <- df.all[-missing_idx, ] %>% as_tibble()
+```
+
+NOTE:
+
+There's no missing value for this dataset. However, I would like to calculate missing values at first. If I couldn't, I drop missing values if the sample size is too small or too large. For non-calculated values such as experimental results, I would use mean value for continuous or mode for categorical variables.
+
+
+<br/><br/>
+#### Outliers detection and removal
+
+
+Categorical data not necessary for outliers detection and removal:
+
+[5] hacceptor
+[6] hdonor 
+[13] atom_chiral_def
+[14] bond_chiral
+[15] bond_chiral_def
+[16] bond_chiral_undef
+[18] covalent_unit
+
+
+9 and 10 could be controversal, but I suspect these two properties have a significant impact on the solubility. Therefore, keep them.
+
+```{r}
+
+z_cal <- function(x){
+  (x-mean(x))/sd(x)
+}
+
+all_outliers_idx <- vector()
+
+for(name in colnames(df_clean[-c(1,2,3,5,6,13,14,15,16,18)])){
+  outlier_inx <- seq(nrow(df_clean))[abs(z_cal(df_clean[[name]])) > 3]
+  all_outliers_idx <- append(all_outliers_idx, outlier_inx)
+}
+
+all_outliers_idx <- unique(unique(all_outliers_idx))
+all_outliers_idx <- all_outliers_idx[!is.na(all_outliers_idx)]
+#Remove outliers:
+
+df_clean_no_out <- df_clean[-all_outliers_idx, ]
+```
+
+Now take another look at histogram. At this moment, distributions of all variables are reasonable for me. For example, there are fewer large molecules that people measured their solubility
+
+```{r}
+ggplot(gather(df_clean_no_out[,-c(1,2,3)]), aes(value)) + 
+  geom_histogram( bins=10) +
+  facet_wrap(~key, scales = 'free') +
+  labs(title = "Histogram of data without outliers")
+```
+
+Another thing worth to demostrate here is the data distribution and normalization. 
+
+#### Data distribution adjustment.
+
+In the histogram above we can see that molarmass, polararea, and complicity are widely distributed, therefore feature distribution adjustment and min-max normalization is necessary for ANN we're going to implement in the future.
+Logarithm is applied to [4] complicity, [9] molarmass, [10] polararea to change their distributions.
+
+```{r}
+df_clean_trans <- df_clean_no_out %>% 
+  mutate(molarmass = log(molarmass))
+```
+
+#### Data Normalization.
+
+Normalization should be performed on all features since a large number become dominant according to a small number in ANN training although KNN and K-mean are not used for this project.
+
+HOWEVER!!! Based on results, normalized data has no impact on results of 10-fold cross-validation for three algorithms at all! It sometimes improves and sometimes make hold-out prediction worse. So... For regression model, normalization is not (maybe just for this project) helpful.
+
+```{r}
+mmnorm <- function(x){
+  return(((x-min(x))/(max(x)-min(x))))
+}
+
+soldenorm <- function(x){
+  return( ((x/2+0.5)*(max(df.all$solubility)-min(df.all$solubility))+min(df.all$solubility)))
+}
+
+df_norm <- sapply(df_clean_trans[-c(1,2,3,18)], mmnorm) %>% as_tibble()
+df_norm <- cbind(df_clean_trans[c(1,2,3,18)], df_norm)
+#df_norm <- df_clean_no_out
+## Test de-normalization:
+
+```
+
+
+Histogram of our normalized data:
+
+```{r}
+ggplot(gather(df_norm[,-c(1,2,3)]), aes(value)) + 
+  geom_histogram( bins=10) +
+  facet_wrap(~key, nrow=4, scales = 'free')
+```
+
+
+#### Correlation and data cleaning
+
+For correlation, solubility shows a strong correlation to complicity, logP, molarmass, havy_atom. Also, it has little correlation to number of hydrogen donors.
+
+Strong correlation:
+
+complicity, logP, molarmass, heavy_atom.
+
+Weak correlation:
+
+hdonor, rotational, polararea, atom_chiral.
+
+```{r}
+cor(df_norm[, -c(1,2,3)], df_norm$solubility)
+```
+
+On the top we can see, hacceptor_ratio and hdonor_ratio have more correlatioon to solubility than hacceptor and hdonor. Therefore, our adjustment is successful. In adittion, cother also shows a weak correlation to solubility. Among other properties, these three are relatively important for predition.
+
+COR of atom_chiral is the same as atom_chiral_undef. Take a deeper look for atom_chiral_undef and atom_chiral
+
+```{r}
+table(df_norm$atom_chiral_undef)
+table(df_norm$atom_chiral)
+
+# Test if any two values are different
+sum(!(df_norm$atom_chiral_undef == df_norm$atom_chiral))
+
+```
+
+Summation is zero, means there are two identical columns. Drop one keep the other. Same strategy for bond_chiral, but there are several different values. Therefore, don't drop bond chiral families.
+
+```{r}
+sum(!(df_norm$bond_chiral_undef == df_norm$bond_chiral))
+sum(!(df_norm$bond_chiral_def == df_norm$bond_chiral))
+```
+
+Drop atom_chiral_undef column
+
+```{r}
+df_norm <- df_norm %>% select( -atom_chiral_undef)
+```
+
+\newpage
+
+#### Collinearity
+
+```{r,fig.width=10,fig.height=11, warning=FALSE}
+pairs.panels(df_norm)
+```
+
+Pairs.panels function is used to display relationship between all continuous variables. In the graph above we can see that there is some sort of clear linear relationship between molarmass, hacceptor, heavy_atoms, and complicity. 
+
+\newpage
+
+
+# CRISP-DM: Modeling
+
+## Model Construction
+
+We need regression models for value prediction, therefore we have limited selections. Since we saw before that logP has a strong correlation to solubility, linear regression is one method we want to use. 
+
+The second algorithm is model tree. In general, we can split properties one by one based on if it's contributing to solubility. Also, linear regression at each node can also improve the accuracy technically.
+
+The third model I want to use is artifical neural network. ANN is capable of both classification and regression problems, and I assume there's some kind of equatin can describe behavior of solubility using properties I have right now. 
+
+### - Hold-out method for train and test sample preparation.
+
+```{r}
+set.seed(0)
+train.sample.idx <- sample(1:nrow(df_norm), 0.7*nrow(df_norm))
+train.sample <- df_norm[train.sample.idx, -c(1,2,3)] %>% as.data.frame()
+test.sample <- df_norm[-train.sample.idx, -c(1,2,3)] %>% as.data.frame()
+```
+
+
+### Model tree: cubist
+
+```{r}
+model.tree.reg <- cubist( x = train.sample[-1], y =  train.sample$solubility)
+model.tree.pred <- predict(model.tree.reg, test.sample)
+Overall_Error <- add_row(Overall_Error,
+                        Model = "cubist",
+                        MAE = MAE(model.tree.pred, test.sample$solubility),
+                        RMSE = RMSE(model.tree.pred, test.sample$solubility),
+                        RSQ = RSQ(model.tree.pred, test.sample$solubility))
+Overall_Error
+```
+
+### Multi-Linear regression: lm
+
+```{r}
+lm_step_back <- step(lm(solubility ~ ., data = train.sample), direction = 'backward',   trace = 0)
+lm.pred <- predict(lm_step_back, newdata = test.sample)
+Overall_Error <- add_row(Overall_Error,
+                        Model = "Linear_reg",
+                        MAE = MAE(lm.pred, test.sample$solubility),
+                        RMSE = RMSE(lm.pred, test.sample$solubility),
+                        RSQ = RSQ(lm.pred, test.sample$solubility))
+Overall_Error
+```
+
+
+### ANN - Using nnet from rminer package.
+
+I used neuralnet for ANN at the beginning, however, it ran really really slow. It took 20 mins for creating a 4 nodes ANN. Therefore, I tried ANN2. It complied much faster however the accuracy is whole of a mass. After that, I searched online and found a review paper of performance ANN packages in r. available here:
+
+https://www.inmodelia.com/exemples/2021-0103-RJournal-SM-AV-CD-PK-JN.pdf
+
+nlsr, rminer, nnet are three top accurate packages with the compiling speed in a reversed order. Therefore, I chose rminer as ANN calculation package. The rminer package is a basket containing many algorithms. For example, nnet package is used as ann algorithm in rminer. The nnet is a feed-forward neural networks with a single hidden layer. Therefore, more than one layer is not supported.
+
+
+#### ANN with 10 nodes.
+
+In parameters below, 10 hidden nodes, with 500 iteration steps, and 0.1 weight decay parameter is used. MAE is 0.44 and RMSE is 0.34. The best network according to minimum penalized error would be used if no parameter is defined with model = 'mlpe'. However, too many nodes would lead to overfitting.
+
+```{r}
+set.seed(0)
+nn <- fit(solubility ~., train.sample, model='mlpe',size= 5 ,decay=0.1,maxit=500,rang=0.9)
+nn.pred <- predict(nn, test.sample)
+Overall_Error <- add_row(Overall_Error,
+                        Model = "ANN_5_mlpe_all",
+                        MAE = MAE(nn.pred, test.sample$solubility),
+                        RMSE = RMSE(nn.pred, test.sample$solubility),
+                        RSQ = RSQ(nn.pred, test.sample$solubility))
+Overall_Error
+```
+
+What if we use strong correlated chemical properties?
+
+```{r}
+set.seed(0)
+nn <- fit(solubility ~ complicity +logP + molarmass + heavy_atom + hacceptor_ratio+
+            hdonor_ratio + cother, 
+          train.sample, model='mlp',size= 5 ,decay=0.1,maxit=500)
+nn.pred <- predict(nn, test.sample)
+Overall_Error <- add_row(Overall_Error,
+                        Model = "ANN_5_mlpe_strong_cor",
+                        MAE = MAE(nn.pred, test.sample$solubility),
+                        RMSE = RMSE(nn.pred, test.sample$solubility),
+                        RSQ = RSQ(nn.pred, test.sample$solubility))
+Overall_Error
+```
+
+We see that the performance of ANN using 4 strong correlated properties is worse than using all parameters. Which means, other weak correlated parameters also affect accuracy.
+
+#### ANN with default best network.
+
+Now, we see that both MAE and RMSE increased. 
+
+```{r}
+set.seed(0)
+nn <- fit(solubility ~., train.sample, model='mlpe')
+nn.pred <- predict(nn, test.sample)
+Overall_Error <- add_row(Overall_Error,
+                        Model = "ANN_default_mlpe_all",
+                        MAE = MAE(nn.pred, test.sample$solubility),
+                        RMSE = RMSE(nn.pred, test.sample$solubility),
+                        RSQ = RSQ(nn.pred, test.sample$solubility))
+Overall_Error
+```
+
+#### ANN with output averaging.
+
+```{r}
+set.seed(0)
+nn <- fit(solubility ~ ., train.sample, model='mlp')
+nn.pred <- predict(nn, test.sample)
+Overall_Error <- add_row(Overall_Error,
+                        Model = "ANN_5_mlp_all",
+                        MAE = MAE(nn.pred, test.sample$solubility),
+                        RMSE = RMSE(nn.pred, test.sample$solubility),
+                        RSQ = RSQ(nn.pred, test.sample$solubility))
+Overall_Error
+```
+
+By comparing ANNs with three different parameters, we see that the RMSE could be minimized as low as 0.34. If you still remember, RMSE of the prediction of our original data is 0.82. This is a great improvement!
+
+### k-Fold Cross-Validation for train and test sample preparation.
+
+### Model Tree from cubist.
+
+```{r}
+set.seed(0)
+k = 10
+kfold.result <- tibble("Fold" = numeric(), MAE = numeric(), RMSE = numeric(),
+                       "RSQ" = numeric(), "Resample" = character())
+k_groups <- sample(1:10, size=nrow(df_norm), replace=TRUE, prob=rep(.1,10))
+for(i in 1:k){
+  train.sample.idx <- seq(1,nrow(df_norm))[ k_groups != i]
+  train.sample <- df_norm[train.sample.idx, -c(1,2,3)] %>% as.data.frame()
+  test.sample <- df_norm[-train.sample.idx, -c(1,2,3)] %>% as.data.frame()
+  
+  model.tree.reg <- cubist(train.sample[-1], train.sample$solubility)
+  model.tree.pred <- predict(model.tree.reg, test.sample)
+  maei = MAE(model.tree.pred, test.sample$solubility)
+  RMSEi = RMSE(model.tree.pred, test.sample$solubility)
+  RSQi = RSQ(model.tree.pred, test.sample$solubility)
+  
+  
+  kfold.result <- add_row(kfold.result, Fold = i, Resample = paste0("fold",i),
+                          MAE = maei, RMSE = RMSEi, RSQ = RSQi)
+}
+
+kfold.result %>% 
+  pivot_longer( cols = c(MAE, RMSE, RSQ), values_to = 'value', names_to = 'error_type') %>% 
+  ggplot() +
+  geom_line( mapping = aes( x = Fold, y = value, color = error_type)) +
+  labs( x = "Fold index", y = "Value", title = "k-Fold on Model Tree.")
+```
+
+Mean k-fold error:
+
+```{r}
+mean_error <- sapply(kfold.result[c(2,3,4)], mean)
+Overall_Error <- rbind(Overall_Error,cbind(Model="cubist_10_fold", t(mean_error)))
+Overall_Error
+```
+
+
+### Linear Regression from lm.
+
+```{r}
+set.seed(0)
+k = 10
+kfold.result <- tibble("Fold" = numeric(), MAE = numeric(), RMSE = numeric(),
+                       RSQ = numeric(), "Resample" = character())
+k_groups <- sample(1:10, size=nrow(df_clean_no_out), replace=TRUE, prob=rep(.1,10))
+for(i in 1:k){
+  train.sample.idx <- seq(1,nrow(df_clean_no_out))[ k_groups != i]
+  train.sample <- df_clean_no_out[train.sample.idx, -c(1,2,3)] %>% as.data.frame()
+  test.sample <- df_clean_no_out[-train.sample.idx, -c(1,2,3)] %>% as.data.frame()
+  
+  lm_step_back <- step(lm(solubility ~ ., data = train.sample), 
+                       direction = 'backward',   trace = 0)
+  lm.pred <- predict(lm_step_back, newdata = test.sample)
+  maei = MAE(lm.pred, test.sample$solubility)
+  RMSEi = RMSE(lm.pred, test.sample$solubility)
+  RSQi = RSQ(lm.pred, test.sample$solubility)
+  
+  
+  kfold.result <- add_row(kfold.result, Fold = i, Resample = paste0("fold",i),
+                          MAE = maei, RMSE = RMSEi, RSQ = RSQi)
+}
+
+kfold.result %>% 
+  pivot_longer( cols = c(MAE, RMSE, RSQ), values_to = 'value', names_to = 'error_type') %>% 
+  ggplot() +
+  geom_line( mapping = aes( x = Fold, y = value, color = error_type)) +
+  labs( x = "Fold index", y = "Value", title = "k-Fold on Linear Regression.")
+```
+
+Mean k-fold error:
+
+```{r}
+mean_error = sapply(kfold.result[c(2,3,4)], mean)
+Overall_Error <- rbind(Overall_Error,cbind(Model="lm_10_fold", t(mean_error)))
+Overall_Error
+```
+
+
+### ANN from nnet/rminer
+
+```{r}
+set.seed(0)
+k = 10
+kfold.result <- tibble("Fold" = numeric(), MAE = numeric(), RMSE = numeric(),
+                       RSQ = numeric() , "Resample" = character())
+k_groups <- sample(1:10, size=nrow(df_clean_no_out), replace=TRUE, prob=rep(.1,10))
+for(i in 1:k){
+  train.sample.idx <- seq(1,nrow(df_clean_no_out))[ k_groups != i]
+  train.sample <- df_clean_no_out[train.sample.idx, -c(1,2,3)] %>% as.data.frame()
+  test.sample <- df_clean_no_out[-train.sample.idx, -c(1,2,3)] %>% as.data.frame()
+  
+  nn <- fit(solubility ~ ., train.sample, model='mlpe')
+  nn.pred <- predict(nn, test.sample)
+  maei <- MAE(nn.pred, test.sample$solubility)
+  RMSEi <- RMSE(nn.pred, test.sample$solubility)
+  RSQi <- RSQ(nn.pred, test.sample$solubility)
+  
+  kfold.result <- add_row(kfold.result, Fold = i, Resample = paste0("fold",i),
+                          MAE = maei, RMSE = RMSEi, RSQ = RSQi)
+}
+
+kfold.result %>% 
+  pivot_longer( cols = c(MAE, RMSE, RSQ), values_to = 'value', names_to = 'error_type') %>% 
+  ggplot() +
+  geom_line( mapping = aes( x = Fold, y = value, color = error_type)) +
+  labs( x = "Fold index", y = "Value", title = "k-Fold on ANN.")
+```
+
+Mean k-fold error:
+
+```{r}
+mean_error <- sapply(kfold.result[c(2,3,4)], mean)
+Overall_Error <- rbind(Overall_Error,cbind(Model="ANN_default_mlpe_all_10_fold", t(mean_error)))
+Overall_Error
+```
+
+## Tuning hyperparameter of nnet
+
+Number of nodes in the hidden layer is the only one hyperparameter I'm interested in among those three models. Since nnet only supports one layer, I tried 1 to 25 nodes for finding the best value. Hold-out method and k-fold cross-validation are both used for sample division
+
+### Hold-out method + Tuning hyperparameter of nnet.
+
+Here, the train and test sample aren't changed. 1 to 25 nodes were tested. ann.hyper.tune containsresults.
+
+```{r}
+set.seed(0)
+ann.hyper.tune <- tibble("nnode"=numeric(), "mae" = numeric( ), 
+                         "RMSE" = numeric(), "RSQ" = numeric())
+n = 25
+for(i in 1:n){
+  nn <- fit(solubility ~ ., train.sample, model='mlpe', size = i, decay = 0.1, maxit = 500)
+  nn.predict <- predict(nn, test.sample)
+  ann.hyper.tune <- add_row(ann.hyper.tune, nnode = i,
+                            mae = MAE(nn.predict, test.sample$solubility), 
+                            RMSE = RMSE(nn.predict, test.sample$solubility),
+                            RSQ = RSQ(nn.predict, test.sample$solubility))
+}
+```
+
+#### Plotting MAE and RMSE of ANN as a function of number of nodes.
+
+```{r}
+ann.hyper.tune %>% 
+  pivot_longer(cols = c(mae,RMSE, RSQ), names_to = 'error_type', values_to = 'value') %>% 
+  ggplot() +
+  geom_line( mapping = aes( x = nnode, y = value, color = error_type)) +
+  labs( x = "number of nodes", y = "error value", title = "MAE and RMSE of ANN with different number of nodes.
+        Using Hold-out method.")
+```
+
+For the plot above we can see that ANN model performs the best with 16 nodes. Below 5 nodes, model is under fitted, over 16 modes, model is over fitted.
+
+Therefore, we use method ='mlpe' with 16 nodes as our best ANN model created:
+
+```{r}
+set.seed(0)
+nn.n16 <- fit(solubility ~ ., train.sample, model='mlpe', size = 16, decay = 0.1, maxit = 500)
+nn.pred <- predict(nn.n16, test.sample)
+Overall_Error <- Overall_Error %>% 
+  type_convert() %>% 
+  add_row( Model = "ANN_16_mlpe_all_10_fold",
+           MAE = MAE(nn.pred, test.sample$solubility),
+           RMSE = RMSE(nn.pred, test.sample$solubility),
+           RSQ = RSQ(nn.pred, test.sample$solubility))
+Overall_Error
+```
+
+#### Compared to model without engineering features:
+
+
+```{r}
+set.seed(0)
+train.sample.idx <- sample(1:nrow(df_clean_no_out), 0.7*nrow(df_clean_no_out))
+train.sample.ori <- df_clean_no_out[train.sample.idx, -c(1,2,3)] %>% as.data.frame()
+test.sample.ori <- df_clean_no_out[-train.sample.idx, -c(1,2,3)] %>% as.data.frame()
+```
+
+
+```{r}
+set.seed(0)
+ann.hyper.tune <- tibble("nnode"=numeric(), "mae" = numeric( ),
+                         "RSQ" = numeric(), "RMSE" = numeric())
+n = 25
+for(i in 1:n){
+  nn <- fit(solubility ~ ., train.sample.ori, model='mlpe', size = i, decay = 0.1, maxit = 500)
+  nn.predict <- predict(nn, test.sample.ori)
+  ann.hyper.tune <- add_row(ann.hyper.tune, nnode = i,
+                            mae = MAE(nn.predict, test.sample.ori$solubility), 
+                            RMSE = RMSE(nn.predict, test.sample.ori$solubility),
+                            RSQ = RSQ(nn.predict, test.sample.ori$solubility))
+}
+```
+
+
+
+```{r}
+ann.hyper.tune %>% 
+  pivot_longer(cols = c(mae,RMSE, RSQ), names_to = 'error_type', values_to = 'value') %>% 
+  ggplot() +
+  geom_line( mapping = aes( x = nnode, y = value, color = error_type)) +
+  labs( x = "number of nodes", y = "error value", title = "MAE and RMSE of ANN with different number of nodes.
+        Using Hold-out method.")
+```
+
+```{r}
+set.seed(0)
+nn <- fit(solubility ~ ., train.sample.ori, model='mlpe', size = 5, decay = 0.1, maxit = 500)
+nn.pred <- predict(nn, test.sample.ori)
+
+Overall_Error <- add_row(Overall_Error,
+                        Model = "ANN_5_mlpe_all_10_fold_wo_engineering",
+                        MAE = MAE(nn.pred, test.sample.ori$solubility),
+                        RMSE = RMSE(nn.pred, test.sample.ori$solubility),
+                        RSQ = RSQ(nn.pred, test.sample.ori$solubility))
+Overall_Error
+
+```
+
+Comaring two graphs above we can see that our engineered dataset gives a better accuracy on solubility prediction.
+
+
+
+### k-Fold Cross-Validation + Tuning hyperparameter of nnet.
+
+```{r}
+set.seed(0)
+k = 10 # For k fold
+n = 25 # For number of nodes
+
+kfold_hyper_result <- tibble("Fold" = numeric(), "Nodes"=numeric(), MAE = numeric(),
+                       RMSE = numeric(), RSQ = numeric(), "Resample" = character())
+k_groups <- sample(1:10, size=nrow(df_clean_no_out), replace=TRUE, prob=rep(.1,10))
+for(i in 1:k){
+  train.sample.idx <- seq(1,nrow(df_clean_no_out))[ k_groups != i]
+  train.sample <- df_clean_no_out[train.sample.idx, -c(1,2,3)] %>% as.data.frame()
+  test.sample <- df_clean_no_out[-train.sample.idx, -c(1,2,3)] %>% as.data.frame()
+  
+  hyper_tune <- tibble("Nodes"=numeric(), "MAE"=numeric(), "RMSE"=numeric())
+  for(j in 1:n){
+    nn <- fit(solubility ~ ., train.sample, model='mlpe', size = j, decay = .1, maxit = 500)
+    nn.pred <- predict(nn, test.sample)
+    maei <- MAE(nn.pred, test.sample$solubility)
+    RMSEi <- RMSE(nn.pred, test.sample$solubility)
+    RSQi <- RSQ(nn.pred, test.sample$solubility)
+    kfold_hyper_result <- add_row(kfold_hyper_result, 
+                                  Fold = i, Nodes=j, MAE=maei, RMSE=RMSEi, 
+                                  RSQ=RSQi, Resample = paste0("fold",i))
+  }
+  
+}
+```
+
+#### Result processing and plotting.
+
+```{r}
+kfold_hyper_result %>% 
+  group_by( Nodes) %>% 
+  summarise( mean_mae = mean(MAE), mean_RMSE = mean(RMSE), mean_RSQ = mean(RSQ)) %>% 
+  pivot_longer( cols = c(mean_mae, mean_RMSE,mean_RSQ),
+                values_to = "value", names_to = "Error_type") %>% 
+  ggplot() +
+  geom_line( mapping = aes( x=Nodes, y = value, color= Error_type)) +
+  labs( x = "number of nodes", y = "error value", 
+        title = "MAE and RMSE of ANN with different number of nodes.
+        Using 10-fold cross-validation.")
+```
+
+### Hyperparameter tuning using hold-out and k-fold cross-validation comparison
+
+From two graphs above we can see that the overall trends are following number of nodes criteria - underfitting with a smaller number of nodes and overfitting with a larger number of nodes. Both two methods show that n = 6 our ANN has the best performance (minimal error.) One different is RMSE in hold-out method is larger than MAE, while the reverse relationship in k-fold cross-validation method.
+
+The different between two sample preperation methods are k-fold cross-validation could reduce the impact of sample group. Hold-out method shows more noises while lines are more smooth in k-fold cross-validation method. 
+
+In summary, with seed = 0, 6 nodes with mple method nnet has the best performance for our dataset.
+
+```{r}
+set.seed(0)
+nn.n6 <- fit(solubility ~ ., train.sample, model='mlpe', size = 6, decay = 0.1, maxit = 500)
+nn.pred <- predict(nn.n6, test.sample)
+Overall_Error <- Overall_Error %>% 
+  type_convert() %>% 
+  add_row( Model = "ANN_6_mlpe_all_10_fold_tuning",
+           MAE = MAE(nn.pred, test.sample$solubility),
+           RMSE = RMSE(nn.pred, test.sample$solubility),
+           RSQ = RSQ(nn.pred, test.sample$solubility))
+Overall_Error
+```
+
+#### Visualizing k-fold + hyperparameter tuning 
+
+```{r}
+kfold_hyper_result %>% 
+  mutate( sum = MAE+RMSE) %>% 
+  group_by(Nodes) %>% 
+  summarise( "MAE+RMSE" = mean(MAE+RMSE)) %>% 
+  arrange((`MAE+RMSE`)) %>% 
+  ggplot( aes(x = reorder(Nodes, `MAE+RMSE`), y = `MAE+RMSE`)) +
+  geom_bar( stat = 'identity') +
+  labs( x = "Number of hidden nodes", y = "Sum of MAE and RMSE",
+        title = "Model performance using 10-fold cross-validation respected to number of nodes")
+```
+
+
+
+## Improvement using bagging ensemble
+
+#### Bagging function:
+
+#### nnetBag
+bag() function from caret package is used for nnet ANN with bagging algorithm. 16 hidden nodes are chose as that's the optimal value. fit, predict, and aggregate are used example function nnetBag.
+
+Training:
+
+```{r}
+set.seed(0)
+nnetbag_rst <- bag(train.sample[-15], train.sample$solubility, B = 10, size = 16,
+               bagControl = bagControl(fit = nnetBag$fit,
+                                       predict = nnetBag$pred,
+                                       aggregate = nnetBag$aggregate))
+summary(nnetbag_rst)
+``` 
+
+Testing:
+
+```{r}
+set.seed(0)
+predict_bag1 <- predict(nnetbag_rst$fits[[1]]$fit, test.sample$solubility) # prediction by 1' bagged sample model
+predict_bag2 <- predict(nnetbag_rst$fits[[2]]$fit, test.sample$solubility) # prediction by 2' bagged sample model
+predict_bag  <- predict(nnetbag_rst,test.sample[-15])
+Overall_Error <- add_row(Overall_Error,
+                         Model = "ANN_16_bagging",
+                         MAE = MAE(predict_bag, test.sample$solubility),
+                         RMSE = RMSE(predict_bag, test.sample$solubility),
+                         RSQ = RSQ(predict_bag, test.sample$solubility))
+ Overall_Error
+```
+
+From the errors above we can see ANN bagging shows a much smaller error and stronger correlation to targets. Therefore, a bagging ANN is the best choice for our study.
+
+```{r}
+set.seed(0)
+ctreebag_rst <- bag(train.sample[-15], train.sample$solubility, B = 20, 
+               bagControl = bagControl(fit = ctreeBag$fit,
+                                       predict = ctreeBag$pred,
+                                       aggregate = ctreeBag$aggregate))
+summary(nnetbag_rst)
+```
+
+```{r}
+predict_bag  <- predict(ctreebag_rst,test.sample[-15])
+Overall_Error <- add_row(Overall_Error,
+                         Model = "CTREE_16_bagging",
+                         MAE = MAE(predict_bag, test.sample$solubility),
+                         RMSE = RMSE(predict_bag, test.sample$solubility),
+                         RSQ = RSQ(predict_bag, test.sample$solubility))
+Overall_Error
+```
+
+Conditional Inference Tree with bagging is also test. Although CITree is not the same as model tree, but it much better than model tree with bagging ensemble.
+
+### Models comparison
+
+Errors and R-squared of top five accurate prediction model are show in graph below. We can see that ANN with 16 nodes and bagging has the best performance, followed by ANN with 16 nodes, mple, and 10-fold cross-validation.
+
+```{r}
+Overall_Error %>% 
+  arrange( MAE + RMSE - RSQ) %>% 
+  top_n(5) %>% 
+  pivot_longer( cols = c(MAE,RMSE,RSQ), values_to = "value",
+                names_to = "name") %>% 
+  ggplot() + 
+  geom_bar ( mapping = aes( x = reorder(Model, -value), y = value, 
+                             color = name, group = name,
+                            fill = name),
+             stat = 'identity' ) +
+  facet_wrap( name ~ ., nrow=3) +
+  labs( x = "Error type, ranked low to high", y = "Error") +
+  coord_flip()
+```
+
+In summary, Bagged ANN shows the best performance. 
+Using k-fold cross-validation to determine number of hidden nodes of ANN, and then using bag() function from caret package. 
+
+Top 3 models are trained using 10-fold cross-validation method which prove that k-fold cross-validation could help to decrease variance.
+
+#### Solubility prediction of Dopamine and Epinephrine. 
+
+```{r}
+dopa_properties <- tibble(cid = 681, IUPAC = "4-(2-aminoethyl)benzene-1,2-diol",
+                          formula = "C8H11NO2", 
+                          complicity = 119, hacceptor=3, hdonor=3, rotational=2,
+                          logP = -0.98, molarmass=153.18, polararea=66.5, 
+                          heavy_atom=11, atom_chiral=0, atom_chiral_undef = 0,
+                          bond_chiral=0, bond_chiral_def=0, bond_chiral_undef=0, 
+                          tautomers=0, solubility = log10(535/153.08),
+                          hacceptor_ratio=3/153.18, 
+                          hdonor_ratio=3/153.18, cother=8/3)
+
+epin_properties <- tibble(cid = 5816, IUPAC = "methylamino-ethylbezene-diol",
+                          formula = "C9H13NO3", 
+                          complicity = 154, hacceptor=4, hdonor=4, rotational=3,
+                          logP = -1.4, molarmass=183.2, polararea=72.7, 
+                          heavy_atom=13, atom_chiral=1, atom_chiral_undef = 0,
+                          bond_chiral=0, bond_chiral_def=0, bond_chiral_undef=0, 
+                          tautomers=0, solubility = log10(.18/183.2),
+                          hacceptor_ratio=4/183.2, 
+                          hdonor_ratio=3/183.2, cother=9/4)
+
+dopa_norm <- ((dopa_properties[-c(1,2,3)] - 
+                 sapply(df_clean_no_out[-c(1,2,3)],min))/
+                (sapply(df_clean_no_out[-c(1,2,3)],max)-
+                   sapply(df_clean_no_out[-c(1,2,3)],min))-0.5)*2
+
+epin_norm <- ((epin_properties[-c(1,2,3)] - 
+                 sapply(df_clean_no_out[-c(1,2,3)],min))/
+                (sapply(df_clean_no_out[-c(1,2,3)],max)-
+                   sapply(df_clean_no_out[-c(1,2,3)],min))-0.5)*2
+dopa_norm$solubility <- log10(535/153.08)
+epin_norm$solubility <- log10(.18/183.2)
+```
+
+#### ANN with bagging:
+
+Dopamine solubility in water prediction:
+
+```{r}
+predict(nnetbag_rst,dopa_norm) - dopa_properties$solubility
+```
+
+Epinephrine solubility in water prediction:
+
+```{r}
+predict(nnetbag_rst,epin_norm) - epin_properties$solubility
+```
+
+#### ANN with 16 nodes
+
+```{r}
+predict(nn.n16,dopa_norm) - dopa_norm$solubility
+predict(nn.n16,epin_norm) - epin_properties$solubility
+```
+
+#### ANN with 6 nodes
+
+```{r}
+predict(nn.n6,dopa_norm) - dopa_norm$solubility
+predict(nn.n6,epin_norm) - epin_properties$solubility
+```
+
+#### Model tree
+
+```{r}
+
+set.seed(0)
+k = 10
+kfold.result <- tibble("Fold" = numeric(), pre_d = numeric(),
+                       pre_e = numeric(), "Resample" = character())
+k_groups <- sample(1:10, size=nrow(df_norm), replace=TRUE, prob=rep(.1,10))
+for(i in 1:k){
+  train.sample.idx <- seq(1,nrow(df_norm))[ k_groups != i]
+  train.sample <- df_norm[train.sample.idx, -c(1,2,3)] %>% as.data.frame()
+  test.sample <- df_norm[-train.sample.idx, -c(1,2,3)] %>% as.data.frame()
+  
+  model.tree.reg <- cubist(train.sample[-1], train.sample$solubility)
+  model.tree.pred.d <- predict(model.tree.reg, dopa_norm) - dopa_norm$solubility
+  model.tree.pred.e <- predict(model.tree.reg, epin_norm) - epin_norm$solubility
+  
+  kfold.result <- add_row(kfold.result, Fold = i, Resample = paste0("fold",i),
+                          pre_d = model.tree.pred.d,
+                          pre_e = model.tree.pred.e)
+}
+
+sapply(kfold.result[c(2,3)], mean) 
+```
+
+
+These two chemicals have very similar formula but huge solubility difference: solubility of dopamine is 150 folds hgiher than Epinephrine in water. From our ANN prediction we can see that, it predicted lower solubility for a higher value, and lower for a higher value. 
+
+For ANN, ANN with bagging model shows the best prediction for Dopamine among the three, and ANN with 16 nodes is the best for Adrenaline. 
+
+However, Model tree shows surprisingly good performance on Dopamine but still not as good as ANN with bagging. With a simplier training process, model tree performs better than all ANN models.
+
+The performance of our model is poor for Dopamine.
+
+There are couple reasons that impact our model:
+
+1. Size limitation. 1000 chemicals are not enough to predict tens of thousands chemicals.
+
+2. Organic chemicals are hard to predict it's solubility due to  comlexicity of structure.
+
+3. Missing critical physical/chemical properties as prediction variables. For example, -OH, -NH2 and other functional groups connect to an aromatic ring can improve solubility significantly. However, if there are several carbon atoms between them, it turns to insoluble. Therefore, properly define if polar functional groups detached to aromatic rings directly would improve our accuracy significantly.
+
+
+This model can be improved much better once the database enriched by more data using web crawler.
+
+
+Jiaming Xu, May 3rd, 2022. Boston.
+

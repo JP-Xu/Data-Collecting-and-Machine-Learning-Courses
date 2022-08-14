@@ -1,0 +1,83 @@
+---
+title: "Assignment 1"
+author: "Jiaming Xu"
+date: "1/19/2022"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+```
+
+### Q1
+
+1. 
+R Markdown file contains code and plain text, it often used as code explanation. A R Markdown file can export to LaTex like document file, which is really easy to carry and demonstrate codes.  
+R file contains normally only scripts with some comments, used for excuting aims.
+
+2.
+str() and summary() do similar things but outputs are different.  
+str() displays the properties more about the structure of an r ojbect, data frame for example, str() displays amounts of obs, variables, class of vectors, etc.  
+summary() shows little about the structure, more about the statistics, e.g. minimun, maximun, quantile, etc.
+
+### Q2
+
+```{r cars}
+print(sprintf('There are %02d columns and %02d rows in the mtcars dataset.',
+        ncol(mtcars), nrow(mtcars)))
+```
+
+### Q3
+
+First 3 rows of mtcars:
+
+```{r print first three rows of dataset.}
+print(head(mtcars, n = 3))
+```
+
+Last 5 rows of mtcars:
+
+```{r print last five rows of dataset.}
+print(tail(mtcars, n = 5))
+```
+
+### Q4
+
+```{r}
+cat(sprintf("Two categorical veriables are %s, %s (automatic or manual) and two continuous variables are %s, %s.", colnames(mtcars)[2], colnames(mtcars)[9], colnames(mtcars)[1], colnames(mtcars)[6]))
+```
+
+### Q5
+
+```{r}
+ggplot(data = mtcars) +
+    geom_point(mapping = aes(x=disp, y=mpg))
+```
+
+### Q6
+
+This figure shows how highway miles per gallon influenced by the engine displacement, and coloring these points by the number of cylinders. The colorbar on the right hand side of the plot indicates the number of cylinders of cars. Since the number of cylinder must be an integer, in fact there are four different bule colors in the figure. In the figure, the darker the dots, the lower the engine displacement and higher the high way mpg. Which means 4 cylinder vehicles have lowest engine displacement and highest high way mpg. The engine displacement increases and high way mpg decreases as number of cylinder increases.
+
+```{r}
+ggplot(data = mpg) +
+    geom_point(mapping = aes(x = displ, y = hwy, color = cyl))
+```
+
+### Q7
+
+```{r}
+ggplot(data = mpg) +
+  geom_point(mapping = aes(x = displ, y = hwy)) +
+  facet_wrap(vars(drv))
+```
+
+From figure in Q7 we can see that several highest high way mpg vehicles are front-wheel drived, and also front wheel drived vehicles have less engine displacement and higher high way mpg. Front-wheel vehicles always mean cheap and feul efficient, very popular in office workers.
+
+On the other hand, rear-wheel vehicles always indicate "performance", with higher engine displacement and fewer high way mpg. This type of vehicle was designed for a small part of people, therefore there are less vehicles in this category comparing with other two.
+
+4x4 vehicles are nearly mandatory in North, for example Boston. In winter, 4x4 vehicle always provides more confidence and safety to passengers. Because it's safety, almost every vehicle provides a 4x4 version, so that this category has the biggest amount of vehicles, with a wide range engine displacement and high way mpg. Also, comparing to other two, 4x4 vehicles always have fewer high way mpg with same engine displacement.
+
+In summary, rear-wheel drive vehicles provide higher engine displacement than front-wheel drive ones but lower high way mpg, higher high way mpg than 4x4 vehicles with same engine displacements. Also, less options in this category.

@@ -1,0 +1,108 @@
+---
+title: "DA5020.A4.Jiaming.Xu"
+subtitle: "Assignment 4"
+author: "Jiaming Xu"
+date: "2/7/2022"
+output: html_document
+---
+
+##Q1:
+
+According to data set dictionary, VendorID, RateCodeID, Payment_type, Trip_type are categorical variables, therefore conver them into factor.
+
+1. Remove rows of pickup date and dropoff date both not in Feburary.
+
+2. Drop ehail_fee column since only NA in it.
+
+```{r}
+library(tidyverse)
+library(dplyr)
+df <- read_csv("https://s3.amazonaws.com/nyc-tlc/trip+data/green_tripdata_2020-02.csv")
+str(df)
+
+df_clean <- df %>% 
+    mutate_at( vars( VendorID, RatecodeID, payment_type, trip_type), as.factor) %>% 
+    mutate( pick_up_month = format( lpep_pickup_datetime, "%Y-%b")) %>% 
+    mutate( drop_off_month = format( lpep_dropoff_datetime, "%Y-%b")) %>% 
+    filter(  !( drop_off_month != "2020-Feb" & pick_up_month != "2020-Feb")) %>% 
+    dplyr::select( -ehail_fee)
+
+df_clean
+```
+
+## Q2:
+
+I made a function to find the most common value in a vector. Use match function to find the amount of unique values, then use which.max return it's maximum index, then extract it's value.
+
+The most common hail type is street-hail, and most common payment method is credit card.
+
+```{r}
+findMode <- function(x) {
+    u <- unique(x)
+    return (u[which.max(tabulate(match(x, u)))])
+}
+findMode(df_clean$trip_type)
+findMode(df_clean$payment_type)
+```
+
+## Q3:
+
+In February, people like to hail a taxi on Thursday, Friday and Saturday. 
+
+```{r}
+df_clean %>% 
+    mutate( date = format(lpep_pickup_datetime, "%d-%a")) %>% 
+    group_by( date) %>% 
+    count %>% 
+    ggplot( )+
+        geom_bar( mapping = aes( x = date, y = n),
+                   fill='white', color = 'black', stat = 'identity') +
+        labs( x = "Date in Feburary", y = 'Frequency', title = 'Hail taxi frequency in Feburary') +
+    coord_flip()
+
+```
+
+## Q4:
+
+Create a function that use str_match function in string package, use regex pattern " (\\d{2}):" and extract the second group inside the parentheses. Since str_match returns a matrix, remember use [, 2] to take out second column from result.
+
+```{r}
+library(stringr)
+HourOfDay <- function(x){
+    return (str_match(x, " (\\d{2}):")[, 2])
+}
+
+HourOfDay("2020-02-01 11:10:25")
+```
+
+## Q5 - Q6:
+
+I combine Q5 and Q6 together so that I can use pipe to manipulate and visualize data continuously. From the figure below, it shows that the median of trip distance in February is larger at 5 and 6 am in the morning, taxi is high demanding for communicators!
+
+```{r}
+df_clean %>% 
+    mutate( lpep_pickup_hour = HourOfDay(lpep_pickup_datetime)) %>% 
+    group_by( lpep_pickup_hour) %>% 
+    summarise( median_trip_distance = median(trip_distance)) %>% 
+    ggplot() + 
+        geom_bar( mapping = aes( x = lpep_pickup_hour, y = median_trip_distance)
+                  , fill ='white', color = 'black', stat = 'identity') +
+        labs( x = "Hour in a day", y = "Median trip distance")
+```
+
+## Q7:
+
+I tried to use "count" function in pipe but failed to use filter function to find the maximum value, therefore I used summarise function to count in each group.
+
+People hailed taxi on valentine's day the most on February!
+
+```{r}
+df_clean %>% 
+    mutate(day = format( lpep_pickup_datetime, '%b-%d')) %>% 
+    group_by(day) %>% 
+    summarise(n = n()) %>% 
+    filter( n == max(n))
+```
+
+
+

@@ -1,0 +1,155 @@
+---
+title: "Assignment 6"
+author: "Jiaming Xu"
+output:
+  html_document:
+    df_print: paged
+---
+
+# Q1: 
+
+.open /Users/Downloads/imdb.db
+.tables
+CREATE TABLE director_info(
+Director_ID PRIMARY KEY,
+Director_Name TEXT);
+.tables
+.separator ','
+.import /Users/Downloads/directors.csv director_info
+SELECT * FROM director_info
+.save /Users/Downloads/imdb2.db
+
+# Q2:
+
+## 1.
+
+```{r, results='hide'}
+library(RSQLite)
+library(ggplot2)
+library(dplyr)
+```
+
+1. Use dbConnect to load database into R.
+
+2. Check talbes in database, create two sqlCmd strings.
+
+3. Use dbGetQuery function to directly get results by running sqlCmd from database.
+
+4. print results.
+
+```{r}
+con <- dbConnect(SQLite(), "/Users/jiamingxu/Downloads/imdb2.db")
+dbListTables(con)
+sqlCmd1 = "SELECT COUNT(*) FROM movie_info"
+sqlCmd2 = "SELECT COUNT(*) FROM director_info"
+
+rs1 = dbGetQuery(con, sqlCmd1)
+rs2 = dbGetQuery(con, sqlCmd2)
+sprintf("movie_info has %d of rows, director_info has %d of rows", as.integer(rs1), as.integer(rs2))
+
+```
+
+## 2.
+
+1. Create sqlCmd string with two variables x and y referring years.
+
+2. Use Query function ot send a qurey to sqlite.
+
+3. Use dbBind function to add parameters.
+
+4. Fetch results and print.
+
+5. Show histogram plot for visulization. 
+
+```{r}
+sqlCmd = "SELECT COUNT(*) AS 'Summation' FROM movie_info WHERE Release_Year >= :x AND Release_Year <= :y"
+query = dbSendQuery(con, sqlCmd)
+dbBind(query, params = list(x = 2010, y = 2020))
+rs = dbFetch(query)
+print(rs)
+
+sqlCmd = "SELECT Release_Year FROM	movie_info;"
+rs = dbGetQuery(con, sqlCmd) 
+rs <- as_tibble(rs)
+colnames(rs) <- c("Year","Count")
+# Drop invalid year info.
+hist(as.numeric(rs$Year[-967]))
+
+```
+
+## 3:
+
+1. Use "%Action%" string to screen out action movies.
+
+2. Use min, max, mean functions in R to process these results.
+
+3. We can also do data process in sql, but covered by future questions.
+
+```{r}
+sqlCmd = "SELECT IMDB_Rating FROM movie_info WHERE Genre LIKE '%Action%'"
+rs <- dbGetQuery(con, sqlCmd)
+sprintf("Acting movies Min rating is %.2f, Max rating is %.2f, average rating is %.2f.",min(rs), max(rs), mean(rs$IMDB_Rating))
+```
+
+## 4:
+
+1. Use !="NA" string to screen out empty rows in Gross column.
+
+2. Use ORDER BY .. DESC to sort results descending. LIMIT first 25 results.
+
+```{r}
+sqlCmd = "SELECT Series_Title, Genre, Gross FROM movie_info WHERE Gross != 'NA' ORDER BY Gross DESC LIMIT 25 ;"
+rs <- dbGetQuery(con, sqlCmd)
+print(rs)
+```
+
+## 5:
+
+1. Use LEFT JOIN function join movie_info and director_info together, ON Director_ID.
+
+2. SUM() function and AS to calculate the sum of Gross of each director, ORDRE BY .. DESC to sort results descending. LIMIT :x, variable defined in dbBind function.
+
+```{r}
+sqlCmd = "SELECT director_info.Director_Name, SUM(Gross) AS 'OVERALL' FROM movie_info LEFT JOIN director_info ON director_info.Director_ID = movie_info.Director_ID GROUP BY movie_info.Director_ID ORDER BY OVERALL DESC LIMIT :x;"
+query = dbSendQuery(con, sqlCmd)
+dbBind(query, params = list(x = 10))
+rs = dbFetch(query)
+print(rs)
+```
+
+## 6:
+
+1. Find the input in Director_NAME in director_info, if not, return not found results. This is an easy way.
+
+2. I still LEFT JOIN two tables first then looking up for the movie information, which can be modified to versatile purpose.
+
+```{r}
+verifyDirector <- function(x){
+  sqlCmd = "SELECT * FROM director_info LEFT JOIN movie_info ON movie_info.Director_ID = director_info.Director_ID WHERE director_info.Director_Name = :w;"
+  query = dbSendQuery(con, sqlCmd)
+  dbBind(query, params = list(w = x))
+  rs = dbFetch(query)
+  if(nrow(rs) == 0){sprintf("%s is not found in database", x)} else{
+    sprintf("%s is found in database", x)
+  }
+}
+verifyDirector("David Li")
+verifyDirector("Steven Spielberg")
+```
+
+
+# Q3:
+
+```{r}
+sqlCmd = "SELECT avg(Runtime) FROM movie_info WHERE Genre LIKE '%thriller%';"
+rs <- dbGetQuery(con, sqlCmd)
+print(rs)
+
+dbDisconnect(con)
+
+```
+
+
+
+
+

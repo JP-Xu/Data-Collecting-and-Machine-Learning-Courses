@@ -1,0 +1,77 @@
+---
+title: "Practice 3"
+author: "Jiaming Xu"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(gmodels)
+library(caret)
+library(class)
+setwd("/Users/jiamingxu/OneDrive - Northeastern University/Spring 2022/DA5030")
+```
+
+## Step 1 & 2- Importing, preparing and exploring the data:
+
+```{r}
+prc <- read.csv("https://da5030.weebly.com/uploads/8/6/5/9/8659576/prostate_cancer.csv", stringsAsFactors = FALSE)
+str(prc)
+prc <- prc[-1]
+table(str_replace_all(prc$diagnosis_result, c("M" = "Malignant", "B" = "Benign")))
+prc_n <- as_tibble(sapply(prc[2:9], function(x) ((x - min(x))/ (max(x) - min(x)))))
+summary(prc_n$radius)
+```
+
+Creating training and test data set.
+
+```{r}
+prc_train <- prc_n[1:65, ]
+prc_test <- prc_n[66:100, ]
+
+prc_train_labels <- prc[1:65, 1]
+prc_test_labels <- prc[66:100, 1]
+
+prc_test_pred <- knn(train = prc_train, test = prc_test, cl = prc_train_labels, k = 10)
+```
+
+## Analysis results using gmodels: 
+
+```{r}
+CrossTable(x = prc_test_labels, y = prc_test_pred, prop.chisq = FALSE)
+knitr::include_graphics("/Users/jiamingxu/Desktop/crosstable.png")
+```
+
+```{r}
+prc_test_pred_11 <- knn(train = prc_train, test = prc_test, cl = prc_train_labels, k = 11)
+prc_test_pred_9 <- knn(train = prc_train, test = prc_test, cl = prc_train_labels, k = 9)
+prc_test_pred_15 <- knn(train = prc_train, test = prc_test, cl = prc_train_labels, k = 15)
+prc_test_pred_6 <- knn(train = prc_train, test = prc_test, cl = prc_train_labels, k = 6)
+
+CrossTable(x = prc_test_labels, y = prc_test_pred_6, prop.chisq = FALSE)
+CrossTable(x = prc_test_labels, y = prc_test_pred_9, prop.chisq = FALSE)
+CrossTable(x = prc_test_labels, y = prc_test_pred_11, prop.chisq = FALSE)
+CrossTable(x = prc_test_labels, y = prc_test_pred_15, prop.chisq = FALSE)
+```
+
+From 4 tables above we can see that the predictions are more accurate with smaller k. k = 6 provides the best results among k = (6, 9, 10, 11, 15).
+
+## Caret::knn3Train:
+
+For similify comparison, I only compare two package results with k = 10, the recommended k value for this 100 observations data set. "confusionMatrix" function gives more information about statistics than "CrossTable" function from class package. Not only "confusionMatrix" gives more information, the "knn3Train" function in the same package "caret", also gives a different prediction from "knn" function in the "class" package. 
+
+Prediction made by "knn3Train", more or less the same as "knn". TF in "knn3Train" is 7, which is 5 in "knn". TP is 16 in both functions. Therefore we can say there only minor between them, either works great.
+
+```{r}
+prc_test_pred_knn3 <- knn3Train(train = prc_train, test = prc_test,
+                                cl = prc_train_labels, k=10, prob=FALSE)
+confusionMatrix( table( prc_test_pred_knn3, prc_test_labels))
+```
+
+
+
+
+
+
+

@@ -1,0 +1,94 @@
+---
+title: "DA5030 Practice Problems 1"
+author: "Jiaming Xu"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: html_notebook
+---
+```{r setup, include=FALSE}
+library(tidyverse)
+```
+
+2.
+
+```{r}
+df <- read_csv('https://da5030.weebly.com/uploads/8/6/5/9/8659576/customertxndata.csv', col_names = F)
+colnames(df) <- c("nvis", "ntrans", "os", "gender", "revenue")
+df
+```
+3.
+
+```{r}
+summarise(df,
+          total_revenue = sum(revenue, na.rm=T),
+          mean_nvis = mean(nvis, na.rm=T),
+          med_revenue = median(revenue, na.rm = T),
+          sd_revenue = sd(revenue, na.rm = T),
+          com_gender = names(sort(table(df$gender), decreasing=T))[1])
+```
+4.
+
+```{r}
+df %>% 
+    select(gender, revenue) %>% 
+    drop_na() %>% 
+    ggplot() +
+        geom_bar(mapping = aes( x = gender, y = revenue, fill = gender), stat = 'identity')
+```
+
+5.
+
+Correlation between number of visits and customer costs is 0.739. This indicate a strong relationship between two variables.
+
+```{r}
+cor(df$nvis, df$revenue, method = "pearson", use = "pairwise.complete.obs")
+```
+
+6.
+
+number of transactions and gender variables contain missing data. It's hard to infer missing data from other information since we have so few variables available. Therefore, I use the statistical value replacing the missing values. However, it's impossible to use statistical for gender since it's a categorical data, and I only apply this replacement to transactions.
+I use "sapply" function to apply "sum(is.na( ))" function to columns in df to calculate number of missing values in each column.
+
+```{r}
+sapply(df, function(x) sum(is.na(x)))
+```
+
+7.
+
+As the result in question 3, male is the mode of gender. It's easier to manually replace them since only two columns and they're different type of replacement.
+
+```{r}
+df$ntrans[is.na(df$ntrans)] <- round(mean(df$ntrans, na.rm = T), digits = 0)
+df$gender[is.na(df$gender)] <- "male"
+```
+
+8.
+
+generate a sequence same length as df, then turn it to 0 and 1s. Odd for 1 and even for 0.
+
+```{r}
+split_index <- seq(1, nrow(df)) %% 2
+train_df <- df[split_index == 1, ]
+valid_df <- df[split_index == 0, ]
+```
+
+9.
+
+The difference between train and valid datasats is about $10, or about 2.2%. I guess this means different dataset will return different models evenif only switch purpose of two.
+
+```{r}
+print( sprintf( "Average revenue of train dataset: $%.2f, validation dataset: $%.2f. ",
+                mean(train_df$revenue), mean(valid_df$revenue)))
+```
+
+10.
+
+```{r}
+set.seed(77654)
+sample <- sample(1:3,size=nrow(df),replace=TRUE,prob=c(0.6,0.2,0.2))
+train <- df[sample == 1, ]
+valid <- df[sample == 2, ]
+test <- df[sample == 3, ]
+```
+
+
+

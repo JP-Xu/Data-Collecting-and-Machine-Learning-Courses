@@ -1,0 +1,268 @@
+---
+title: "Assignment 7"
+author: "Jiaming Xu"
+output:
+  html_document:
+    df_print: paged
+---
+
+# Q1:
+
+### 1. Collecting data:
+
+```{r, message=FALSE}
+library(tidyverse)
+library(neuralnet)
+```
+
+1. Read xls file using read_xls and change column names.
+
+2. create normalize function.
+
+3. I used sapply instead of lapply since the input is a neat data frame. Convert results as a tibble.
+
+4. Split normalized data into a training and a testing data sets using randomly assigning method.
+
+```{r}
+set.seed(7)
+df <- readxl::read_xls("Concrete_Data.xls")
+colnames(df) <- c('cement','slag','ash','water','superplastic','coarseagg','fineagg','age','strength')
+
+normalize <- function(x) {
+  return( (x - min(x) ) / (max(x) - min(x)))
+}
+
+concrete_norm <- sapply(df, normalize) %>% as_tibble()
+
+summary(concrete_norm$strength)
+summary(df$strength)
+
+trainidx <- sample(1:nrow(concrete_norm), 0.7*nrow(concrete_norm))
+concrete_train <- concrete_norm[trainidx, ]
+concrete_test <- concrete_norm[-trainidx, ]
+```
+
+### 3. training a model
+
+1. train model and plot ANN.
+
+From figure below we can see, there are 8 input nodes, one hidden node, and one prediction node. Weight of each input is labelled, bias terms are also shown in figure in blue. These bias numbers are added to previous layer results.
+
+```{r}
+set.seed(1)
+concrete_model <- neuralnet(strength ~ ., data = concrete_train)
+plot(concrete_model)
+```
+
+### 4. Evaluating performance
+
+1. Use compute (instead of prediction or augment) for prediction.
+
+2. Performance is measured by correlation between prediction and target values in test dataset. Correlation is relatively the same as it in the testbook.
+
+```{r}
+set.seed(12345)
+model_results <- compute(concrete_model, concrete_test[1:8])
+predicted_strength<- model_results$net.result
+cor(predicted_strength, concrete_test$strength )
+```
+
+### 5. Improving performance
+
+Since only one layer used in previous question, the accuracy is flaw. In this question, 5 hidden nodes are used. The first impression is execution wall time is longer than previous question. The other difference is error in this model is 80% less than previous one, this is pretty good!
+
+Also, the correlation between prediction and target increases to 0.934 now.
+
+```{r}
+set.seed(12345)
+concrete_model2 <- neuralnet(strength ~ . , data = concrete_train, hidden = 5)
+plot(concrete_model2)
+model_results2 <- compute(concrete_model2, concrete_test[1:8])
+predicted_strength2 <- model_results2$net.result
+cor(predicted_strength2, concrete_test$strength)
+```
+
+One step further, I did two hidden layers with 5 nodes each. The prediction accuracy wasn't improved too much.
+
+```{r}
+set.seed(12345)
+concrete_model3 <- neuralnet(strength ~ . , data = concrete_train, hidden = c(5,5))
+plot(concrete_model3)
+model_results3 <- compute(concrete_model3, concrete_test[1:8])
+predicted_strength3 <- model_results3$net.result
+cor(predicted_strength3, concrete_test$strength)
+```
+
+# Question 2 - SVM
+
+Support Vector Machine (SVM) is a robust machine learning algorithm that can be applied for both numeric and classification prediction. Idea of SVM are not complex, but there are many tricky techniques to make it work better.
+
+Here, we only learned how to use it in a proper way.
+
+### 1. collecting data. 2. exploring data.
+
+1. Find the column names of dataset on website. Read html as raw, find specific node, then save plain text, finding colnames using regex.
+
+2. Change lettr column as factor to perform SVM.
+
+```{r, message=FALSE}
+library(rvest)
+library(httr)
+
+url <- "https://archive.ics.uci.edu/ml/datasets/letter+recognition"
+html_raw <- read_html(url)
+text <- html_raw %>% 
+  html_nodes(xpath = '//p[@class="normal"]') %>% 
+  html_text2()
+col.names <- str_match_all(text[22], "\\d+\\. (.*?) ")[[1]][,2]
+df <- read_csv('letter-recognition.csv', col_names = col.names)
+df$lettr <- as.factor(df$lettr)
+```
+
+3. Data set is divided into a train and a test part with 0.7 and 0.3 ratio randomly.
+
+```{r}
+set.seed(7)
+train_idx <- sample(1:nrow(df), 0.7*nrow(df))
+letters_train <- df[train_idx, ]
+letters_test  <- df[-train_idx, ]
+```
+
+### 3. training a model on data
+
+1. Use ksvm function provided by kernlab package. Linear kernel function 'vanilladot' is used.
+
+2. The information of this model including SV type, kernel function, number of SVs, function values, and error.
+
+3. There are 7037 SVs.
+
+```{r}
+library(kernlab)
+letter_classifier <- ksvm(lettr ~ ., data = letters_train,
+                            kernel = "vanilladot")
+letter_classifier
+```
+
+### 4. performance of model.
+
+```{r}
+letter_predictions <- predict(letter_classifier, letters_test)
+agreement <- letter_predictions == letters_test$lettr
+table(agreement)
+prop.table(table(agreement))
+```
+
+### 5. Improving performance
+
+1. Changing kernel function to Gaussian RBF improves model performance for most of data types. The false percentage decreases to 6.75% from 14.62% which is a big improvement.
+
+```{r}
+letter_classifier_rbf <- ksvm(lettr ~ ., data = letters_train,
+                                kernel = "rbfdot")
+letter_predictions_rbf <- predict(letter_classifier_rbf,
+                                    letters_test)
+agreement_rbf <- letter_predictions_rbf == letters_test$lettr
+table(agreement_rbf)
+prop.table(table(agreement_rbf))
+```
+
+Small summary:
+
+ANN and SVM are two complicated algorithm for machine learning among what we've learned so far. The details of them are beyond the scope of this course, and the algorithms are hard to remember for a long time for myself. Therefore, I'll just use these tools instead of digging into them. Just like we use our cell phone everyday but no one wants to figure out how and why it works as it is.
+
+# Question 3 - Finding Patterns – Market Basket Analysis Using Association Rules.
+
+Groceries data set is not ordinary as we processed before which can directly import as a tibble. Instead, it looks like a NOSQL. Item types are placed in curly brackers. 
+
+### 1. Collecting data.
+
+Groceries is an itemMatrix in sparse format, with 9835 transactions and 169 items might purchased. 1 if purchased, 0 otherwise.
+
+Names of most frequent items and values are listed. Milk exists in 2513 / 9835 * 100% = 25% of all transactions.
+
+Statistics info is listed at last, items in each transaction ranging from 1 to 32. 
+
+```{r}
+library(arules)
+data(Groceries)
+summary(Groceries)
+```
+
+Detail of transactions can be extracted by inspect function. Item frequency can be extracted by itemFrequency function.
+
+```{r}
+inspect(Groceries[1:5])
+itemFrequency(Groceries[, 1:3])
+```
+
+Items with frequency more than 10% are plotted in the below by specifying support argument to 0.1.
+
+```{r}
+itemFrequencyPlot(Groceries, support=0.1)
+```
+
+In another way, top 20 frequency can be plotted by speficying topN argument. top 20 items are commonly purchased in my daily life except beer and newspapers. Therefore, they're resonable in my perspective.
+
+```{r}
+itemFrequencyPlot(Groceries, topN = 20)
+```
+
+It can also be plotted as a scatter plot, y axis as transactions and x axis as items. Also sample function can be used to randomly shuffle the data.
+
+```{r}
+image(Groceries[1:5])
+image(sample(Groceries, 100))
+```
+
+### 3. Training a model on the data
+
+Zero rules using default values - support = 0.1, confidence = 0.8. We need to adjust these two values in order to generate useful rules.
+
+```{r}
+apriori(Groceries)
+```
+
+Change support = 0.006, confidence = 0.25, minlen =2. Now, there are 662 rules needs to be revised. 
+
+```{r}
+set.seed(7)
+groceryrules <- apriori(Groceries, 
+                        parameter = list(support = 0.005,
+                                         confidence = 0.25,
+                                         minlen = 2))
+```
+
+### 4. Evaluating performance
+
+There are more information arules providing than textbook, converage and count are two new parameters for example. 
+
+```{r}
+summary(groceryrules)
+
+```
+
+Specific rules can be viewed using inspect function: First three rules are {cake bar} -> {whole milk}, {dishes} -> {oter vegetables}, and {dishes} -> {whole milk}.
+Among these three, my point is dishes and whole milk is not relational except these two items are short in kitchen. In addition, lift of {dishes} -> {whole milk} is 1.176, less than other two rules. That also makes sense it's less important from the view of algorithm.
+
+```{r}
+inspect(groceryrules[1:3])
+```
+
+### 5. Improving performance
+
+We can only use rules with top lift values which infers they're more important.
+
+```{r}
+inspect( sort( groceryrules, by = 'lift')[1:5])
+```
+
+Another way to do is taking subsets of association rules. This method is more like a further step to make results sorted by lift more accurate and covered. Items inside subset function includes both lhs and rhs items, we can only extract lhs or rhs if we want.
+
+```{r}
+berryrules <- subset(groceryrules, items %in% "berries")
+inspect(berryrules)
+```
+
+Summary for Apriori:
+
+Apriori is a way to find relationship between two items by only knowing their frequency, then propose how possible one get involved by the other one. It's very useful while we're trying to figure out what's the possible causation of one variable.

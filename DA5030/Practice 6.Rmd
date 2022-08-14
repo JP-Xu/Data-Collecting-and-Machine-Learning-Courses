@@ -1,0 +1,204 @@
+---
+title: "Practice 6"
+author: "Jiaming Xu"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+# PROBLEM 1:
+
+```{r, message=FALSE}
+library(psych)
+library(tidyverse)
+library(broom)
+library(rpart)
+library(rpart.plot)
+```
+
+## Q1:
+
+```{r}
+df <- read_delim("student-mat.csv", delim = ';')
+pairs.panels(df[c('age','absences','G1','G2','G3')])
+```
+
+## Q2:
+
+Using spread function to make dummy variables took from this website:https://www.r-bloggers.com/2021/10/convert-categorical-variable-to-numeric-in-r/#:~:text=To%20convert%20category%20variables%20to,use%20the%20spread()%20method.&text=To%20do%20so%2C%20use%20the,in%20this%20case%20%E2%80%9Cdummy%E2%80%9D)%3B.
+
+This method is very simple and robust, the reason column was spread into four columns with ones, empty values were filled by zeros. Use new dataset for multi-regression.
+
+```{r}
+
+df_reasondymmy <- df %>% mutate(dummy = 1) %>% 
+  spread(key = reason, value = dummy, fill = 0) %>% 
+  mutate(dummy = 1) %>% 
+  spread(key = school, value = dummy, fill = 0)
+g3_model1 <- lm(G3 ~ age+MS+studytime+G1+G2+course+other+home, data = df_reasondymmy)
+summary(g3_model1)
+```
+
+I chose age, school, studytime, G1 and G2 as inputs. These are typical criterion for hard working except age, since I just want to test how age behaves comparing with other significant factors.
+
+## Q3:
+
+I use step function with backward direction to eliminate unimportant factors determined by AIC. The smaller the AIC, the better the prediction. People always say AIC and BIC are generally two main concretion for elimination. check here:https://stats.stackexchange.com/questions/9171/aic-or-p-value-which-one-to-choose-for-model-selection
+
+1. In turns out, four reasons have no significant impact on G3.
+
+2. At last, only age, studytime, G1 and G2 are four main factors.
+
+```{r}
+step(g3_model1, direction='backward', trace = 1)
+g3_model1_new <- lm(formula = G3 ~ age + studytime + G1 + G2, data = df_reasondymmy)
+summary(g3_model1_new)
+```
+
+P-values are relatively small for two of four variables, age ~ 6^, while studytime is 15% insignificant(not sure if p value means this way). These four are considerables among all input variables.
+
+## Q4:
+
+```{r}
+# age = 22, absences = 10, G1 = 18, G2 = 
+new_obs <- data.frame(age = 22, studytime=10,G1=15,G2=17)
+augment(g3_model1_new, newdata = new_obs)
+predict(g3_model1_new, newdata = new_obs)
+```
+
+SD = 1.906
+95% interval = +/- 1.96*1.906 = 3.73576
+95% prediction of new_obj is between 16.37597 +/- 3.73576.
+
+## Q5:
+
+```{r}
+sqrt(sum((g3_model1_new$fitted.values - df$G3)^2)/nrow(df))
+```
+
+Amazingly similar RMSE as Chris' work with different variables, lol. What do you think Chris?
+
+# Problem 2:
+
+## Q1:
+
+Data processing, relatively redundant but I don't want to edit them, sorry :(.
+
+```{r, warning=FALSE}
+df1 <- df
+df2 <- df1 %>% 
+  mutate(PF = ifelse(G3<10, "F", "P")) %>% 
+  mutate(PFdummy = ifelse(PF == 'F',0,1))
+```
+
+## Q2:
+
+After backward elimination, there were still some variables not statistic significant on G3 scores, like Fjob. In fact, since Fjob is a categorical variables, only "other" under Fjob is significant. Therefore, the five features I choose are School, age, Fjob, studytime, and G2.
+
+Parallel regressions are exhibited since Fjob is actually a categorical variable.
+
+```{r, warning=FALSE}
+
+step(glm( PFdummy ~ -G3 -PF, data = df2, family = binomial), direction = 'backward', trace = 0)
+
+g3_glm <- glm(formula = PFdummy ~ school + age + Fjob + studytime + G2, family = binomial, data = df2)
+
+g3_glm
+```
+
+## Q3:
+
+Parallel regressions are exhibited since Fjob is actually a categorical variable.
+
+The results about Fjob, like Fjobhealth, Fjobservices, means their G3 scores are 1.3106 or 3.2953 than Fjob is at_home.
+
+schoolMS means school MS has 1.9859 higher than GP with others identical.
+
+Other continuous variables means how G3 change when 1 add to it when holding others constant.
+
+## Q4:
+
+```{r}
+sqrt(sum((predict(g3_glm) - df2$G3)^2)/ nrow(df2))
+```
+
+
+# Problem 3:
+
+## Q1:
+
+```{r, message=FALSE, results='hide'}
+wine <- read_csv("https://da5030.weebly.com/uploads/8/6/5/9/8659576/whitewines.csv")
+str(wine)
+wine_train <- wine[1:3750, ]
+wine_test <- wine[3751:4898, ]
+m.rpart <- rpart(quality ~ ., data = wine_train)
+```
+
+rpart.plot can plot regression tree in a flow chart. At first node, 2/3 contains alcohol smaller than 10.9.
+
+```{r}
+rpart.plot(m.rpart, digits = 3)
+rpart.plot(m.rpart, digits = 4, fallen.leaves = TRUE,
+               type = 3, extra = 101)
+
+```
+
+There are several inter-correlated factors which can be determined by cor() function. For example, quality and price doesn't have a vert strong relation.
+
+```{r}
+p.rpart <- predict(m.rpart, wine_test)
+summary(p.rpart)
+summary(wine_test$quality)
+cor(p.rpart, wine_test$quality)
+```
+
+MAE is a way to determine the error of prediction. It doesn't give the same results as RMSE.
+
+```{r}
+MAE <- function(actual, predicted) {
+    mean(abs(actual - predicted))
+}
+MAE(p.rpart, wine_test$quality)
+mean(wine_train$quality)
+MAE(5.87, wine_test$quality)
+```
+
+model tree function in cubist package can make linear regression on each leaf of a regression tree. Therefore, regression tree is actually a Decision Tree can take continuous variable as input, while Model Tree is an actual "Regression Tree".
+
+```{r}
+library(Cubist)
+m.cubist <- cubist(x = wine_train[-12], y = wine_train$quality)
+m.cubist
+summary(m.cubist)
+p.cubist <- predict(m.cubist, wine_test)
+summary(p.cubist)
+cor(p.cubist, wine_test$quality)
+MAE(wine_test$quality, p.cubist)
+```
+
+Model Tree indicates more correlation between price and quality than Regression Tree, which is more reasonable in real life.
+
+## Q2:
+
+And RMSE of model tree is smaller than regression tree, which indicates model tree did a better job.
+
+```{r}
+sqrt(sum((p.cubist - wine_test$quality)^2)/ nrow(df2))
+sqrt(sum((p.rpart - wine_test$quality)^2)/ nrow(df2))
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+

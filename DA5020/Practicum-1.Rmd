@@ -1,0 +1,81 @@
+---
+title: "Practicum 1 DA 5020"
+author: "Jiaming Xu"
+output: html_notebook
+---
+
+```{r, results='hide'}
+library(tidyverse)
+library(XML)
+library(httr)
+library(rvest)
+```
+## Step 1: Importing data.
+
+```{r}
+url = "https://data.ny.gov/api/views/ngbt-9rwf/rows.xml"
+xml_raw = xmlRoot(xmlParse(GET(url)))
+df <- xmlToDataFrame(xml_raw[[1]]) %>% as_tibble()
+```
+
+## Step 2: 
+
+### County, program_category, and primary_substance_group tibbles.
+
+```{r}
+sapply(df,function(x) sum(is.na(x)))
+
+df %>% 
+  mutate(admissions = as.numeric(admissions),
+         year = as.numeric(year)) %>% 
+  group_by(age_group) %>% 
+  summarise( sum = sum(admissions)) %>% 
+  ggplot() +
+    geom_col( mapping = aes( x = age_group, y = sum))
+
+county_raw <- read_html("CountryCodeLists.html")
+county <- county_raw %>% 
+  html_element("tbody") %>% 
+  html_table()
+
+county <- cbind(as_tibble(unlist(cbind(county[ , c(2,4,6,8)]))),
+      as_tibble(unlist(cbind(county[ , c(1,3,5,7)])))) %>% 
+  `colnames<-`(c("county_code", "county_name"))
+
+county[24,1] <- "NA"
+county <- county[-48,] %>% drop_na()
+
+# Create program_category dictionary.
+program_category <- cbind(1:6, unique(df$program_category)) %>%
+  as_tibble() %>%
+  `colnames<-`(c("program_code", "program_category"))
+
+# Row 5840 contains No primary_substance_group information, therefore delete it.
+df <- df[-5840, ]
+# Create primary_substance_group dictionary.
+primary_substance_group <- cbind(1:6, unique(df$primary_substance_group)) %>% as_tibble() %>% 
+  `colnames<-`(c("substance_code", "primary_substance_group"))
+```
+
+### Processing admission_data.
+
+```{r}
+# Capitalize county names.
+df$county_of_program_location <- str_to_title(df$county_of_program_location)
+# Convert Santa to St. in df.
+df$county_of_program_location <- str_replace_all(df$county_of_program_location,
+                                                 c('Saint' = 'St.',
+                                                   "New York" = "New York (City)"))
+df$county_of_program_location <- sapply(df[, 2], function(x) {
+    county$county_code[match( x,county$county_name)]})
+
+df$program_category <- sapply(df[, 3], function(x) {
+    program_category$program_code[ match(x, program_category$program_category)]
+})
+
+df$primary_substance_group <- sapply(df[,6], function(x) {
+    primary_substance_group$substance_code[ match(x, primary_substance_group$primary_substance_group)]
+})
+
+```
+

@@ -1,0 +1,76 @@
+---
+title: "DA5020 Assignment II"
+author: "Jiaming Xu"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+```
+
+Q1:
+
+Dimension of mslaep is 83 x 11. Msleep is a tibble including 83 species' name, genus, vore, order, conservation, sleep and weight information, in total 11 variables (including name). First 5 variables are character class, last 5 are double class. Summary function returns amount of NAs in each group, sleep_rem, sleep_cycle, brainwt contain NAs.
+
+
+```{r}
+summary(msleep)
+head(msleep)
+```
+
+Q2:
+
+I delete NAs in "vore" group for better understanding how many observations are incomplete. From the bar chart we can see that nearly 50% animals were herbivore in this research, about 25% were carnivore and 25% were omnivore. about 6% were insectivore. 
+
+```{r}
+msleep %>% 
+    select(vore) %>% 
+    drop_na() %>% 
+    ggplot() + 
+        geom_bar( mapping = aes( x = vore, y = ..count../sum(..count..)*100, fill = vore)) +
+        ylab("Percentage (%)")
+```
+
+Q3:
+
+It looks like in this dataset, varnivores sleep longer than herbivores.
+
+```{r}
+msleep %>% 
+    filter(vore == 'carni' | vore == 'herbi') %>%
+    group_by( vore) %>%
+    summarise( total_sleep_mean = mean(sleep_total))
+```
+
+Q4:
+
+It looks like there's a strong linear correlation between log-log brain weight and body weight in all animals.
+
+```{r}
+ggplot( data = msleep, mapping = aes(x = bodywt, y = brainwt), na.rm = T) +
+    geom_point( na.rm = T) +
+    coord_trans(x = "log10", y = "log10")
+```
+
+Q5:
+
+```{r}
+cor(msleep$brainwt, msleep$bodywt, use = "pairwise.complete.obs", method="pearson")
+```
+
+0.934 means a very strong correlation between two variables, which confirms our result in Q4.
+
+Q6:
+
+I used z score to determine if an animal is outlier. There are 13 outliers in msleep dataset.
+
+```{r}
+msleep %>% 
+    mutate( z = (sleep_total - mean(sleep_total))/sd(sleep_total)) %>% 
+    filter( abs(z) > 1.5) %>% 
+    select( name, z)
+```
+

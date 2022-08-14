@@ -1,0 +1,359 @@
+---
+title: "Practicum 1 DA 5020"
+author: "Jiaming Xu"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r, results='hide'}
+library(tidyverse)
+library(XML)
+library(httr)
+library(rvest)
+```
+## Step 1: Importing data.
+
+Retrieving XML information from url, navigate to first children node and convert to data frame. Then, change variable types automatically using type_convert function.
+
+```{r}
+url = "https://data.ny.gov/api/views/ngbt-9rwf/rows.xml"
+xml_raw = xmlRoot(xmlParse(GET(url)))
+df_ori <- xmlToDataFrame(xml_raw[[1]]) %>% as_tibble()
+df <- readr::type_convert(df_ori)
+```
+
+## Step 2: 
+
+### County, program_category, and primary_substance_group tibbles.
+
+### 1. Checking if there's any missing data in data set. No missing values.
+
+```{r}
+sapply(df,function(x) sum(is.na(x)))
+```
+
+###2. Checking summary:
+
+From summary function output we can see, only year and admissions columns are numeric, the rests are character. Year ranges from 2007 to 2020; admissions range from 1 to 2862, with 42.81 as mean. Therefore, there are many outliers in this data set. 
+
+```{r}
+summary(df)
+```
+
+One way to handle these outliers are analyzing them separately. Therefore save outliers to data set df_outliers. Criteria here is z > 3.
+
+```{r}
+df_outliers <- df %>% 
+  mutate( z = (admissions - mean(admissions)) / sd(admissions)) %>% 
+  filter( abs(z) > 3)
+
+df_clean <- df %>% 
+  mutate( z = (admissions - mean(admissions)) / sd(admissions)) %>% 
+  filter( abs(z) <= 3) %>% 
+  select( -z)
+```
+
+
+### 3. According to str results, looking each categorical variables.
+
+```{r}
+str(df_clean)
+```
+
+```{r}
+unique(df_clean$county_of_program_location)
+unique(df_clean$program_category)
+unique(df_clean$service_type)
+unique(df_clean$age_group)
+unique(df_clean$primary_substance_group)
+```
+
+Only primary_substance_group contains unusual data "None". Delete corresponding rows.
+
+```{r}
+# Row 5840 contains No primary_substance_group information, therefore delete it.
+df_clean <- df_clean[-which(df_clean$primary_substance_group == "None"), ]
+```
+
+### 4. Potential aditional analysis.
+
+Since different county has different population, it's a good idea to also calculate addiction percentage over population. Import data from New York State goverment website. 
+
+```{r}
+ny_pop <- read_csv("https://data.ny.gov/resource/krt9-ym2k.csv")
+```
+
+### 5. Annual Admissions over time:
+
+```{r}
+df_clean %>% 
+  group_by( year) %>% 
+  summarise( annual_adm = sum(admissions)) %>% 
+  ggplot() + 
+  geom_line( mapping = aes( x = year, y = annual_adm)) +
+  labs( x = "Year", y ="Admissions", title = "Annual admissions in NY State.")
+```
+
+
+## Part 3:
+
+### 1. Create county_dict.
+
+Contains two variables - county_code and county_name. Data took from website provided in the practicum 1 pdf.
+
+county_code: Two or Three letters for county name abbreviation.
+
+county_name: county names in New York State.
+
+Error occurs when imported data from url directly, therefore I download html file to disk then import. Also there are mismathes between dataset and county list, unify them by changing county_dict.
+
+```{r}
+county_raw <- read_html("CountryCodeLists.html")
+county <- county_raw %>% 
+  html_element("tbody") %>% 
+  html_table()
+
+county_dict <- cbind(as_tibble(unlist(cbind(county[ , c(2,4,6,8)]))),
+      as_tibble(unlist(cbind(county[ , c(1,3,5,7)])))) %>% 
+  `colnames<-`(c("county_code", "county_name"))
+
+county_dict[24,1] <- "NA"
+county_dict <- county_dict[-48,] %>% drop_na()
+county_dict$county_name <- str_to_title(county_dict$county_name)
+
+# Make sure 5 Boroughs of New York have unique county code.
+county_dict[11,1] <- "NYQ"
+county_dict[33,1] <- "NYB"
+county_dict[40,1] <- "NYC"
+county_dict[43,1] <- "NYR"
+county_dict[53,1] <- "NYK"
+
+county_dict
+```
+
+### 2. Create program_category_dict.
+
+```{r}
+# Create program_category dictionary.
+program_category_dict <- cbind(1:6, unique(df_clean$program_category)) %>%
+  as_tibble() %>%
+  `colnames<-`(c("program_code", "program_category"))
+
+program_category_dict
+```
+
+### 3. Create primary_substance_dict.
+
+```{r}
+# Create primary_substance_group dictionary.
+primary_substance_dict <- cbind(1:6, unique(df_clean$primary_substance_group)) %>%
+  as_tibble() %>% 
+  `colnames<-`(c("substance_code", "primary_substance_group"))
+  
+primary_substance_dict
+```
+
+### 4. Processing admission_data.
+
+1. Changing "Saint" by "St." for Saint Lawrence, "New York" by "New York (City)" to match county_name in county_dict. 
+
+2. Replacing whole names by abbreviations. 
+
+```{r}
+# Capitalize county names.
+df_clean$county_of_program_location <- str_to_title(df_clean$county_of_program_location)
+# Convert Santa to St. in df.
+df_clean$county_of_program_location <- str_replace_all(df_clean$county_of_program_location,
+                                                 c('Saint' = 'St.',
+                                                   "New York" = "New York (City)"))
+
+admissions_data <- df_clean %>% 
+  mutate( county_of_program_location = county_dict$county_code[match(county_of_program_location, county_dict$county_name)]) %>% 
+  mutate( program_category = program_category_dict$program_code[match(program_category, program_category_dict$program_category)]) %>% 
+  mutate( primary_substance_group = primary_substance_dict$substance_code[match(primary_substance_group, primary_substance_dict$primary_substance_group)])
+
+admissions_data
+```
+
+## Part 4: annualAdmission function.
+
+```{r}
+annualAdmission <- function(){
+df_gbyear <- admissions_data %>% 
+    group_by( year) %>% 
+    summarise( total_adm = sum(admissions))
+
+max.year <- df_gbyear %>% 
+    filter(total_adm == max(total_adm))
+
+df_gbyear %>% 
+    ggplot() +
+    geom_line(mapping = aes( x = year, y = total_adm)) +
+    geom_point(mapping = aes( x = max.year$year, y = max.year$total_adm), color = 'red')+
+    annotate("text", label = "Maxima:", x = max.year$year, y = max.year$total_adm*0.98)+
+    annotate("text", label = paste(max.year[1,], collapse=', ')
+             , x = max.year$year, y=max.year$total_adm*0.95)+
+    labs( x = "Year", y = "Annual admissions",
+          title = "Annual Admissions in the New York State")
+}
+
+annualAdmission()
+```
+
+## Part 5:
+
+```{r}
+total_adm <- sum(admissions_data$admissions)
+admissions_data %>% 
+  group_by( county_of_program_location) %>% 
+  summarise( percentage = sum( admissions)/total_adm*100) %>% 
+  arrange(desc(percentage)) %>% 
+  slice_head(n = 10) %>% 
+  left_join(county_dict, by = c("county_of_program_location" = "county_code")) %>% 
+  ggplot() +
+    geom_bar( mapping = aes( x = reorder(county_name, -percentage), y = percentage,
+                             ),stat = 'identity', fill ='white', color = 'black') +
+  labs( x = "County", y = "Accumulated Admissions, in Percentage (%)", 
+  title = "Top 10 Highest Accumulated Admissions Counties in New York State
+  from 2007 to 2020")
+```
+
+```{r}
+
+ny_pop_ave <- ny_pop %>% 
+  filter( !year == 2006) %>% 
+  group_by(geography) %>% 
+  summarise( pop = mean(population)) %>% 
+  mutate( county_name = str_extract(geography, "\\w+")) %>% 
+  select( -geography)
+
+# Remove New York State
+ny_pop_ave <- ny_pop_ave[-32,]
+# Change New to New York (City)
+ny_pop_ave[31,2] <- "New York (City)"
+ny_pop_ave[50,2] <- "St. Lawrence"
+# Test if 62 county names matching in "county_dict" and "ny_pop_ave"
+sum(sapply(county_dict[, 2], function(x){ x %in% ny_pop_ave$county_name}))
+```
+
+Now, plot top 10 counties with highest percentage of admissions among county population:
+
+```{r}
+admissions_data %>%
+  left_join(county_dict, by = c("county_of_program_location" = "county_code")) %>% 
+  group_by( county_name) %>% 
+  summarise( total_adm = sum(admissions)) %>% 
+  left_join( ny_pop_ave, by = c("county_name" = "county_name")) %>% 
+  mutate( "adm_percentage" = total_adm / pop * 100 / 14) %>% 
+  arrange( desc(adm_percentage)) %>% 
+  slice_head( n = 10) %>% 
+  ggplot() +
+  geom_bar( mapping = aes( x = reorder(county_name, -adm_percentage), y = adm_percentage), fill = "white", color = "black", stat = "identity") +
+  labs( x = "County", y = "Admission Percentage Among Population(%)",
+        title = "Top 10 Counties with the Highest Annual Percentage Among 
+        County Population in New York State from 2007 to 2020.")
+  
+```
+
+This time we can see that no New York counties in top 10 lists. Putnam and Schenectady are two counties with the highest admissions per population and double even triple the third high county, Sullivan. Only Albany exists in both top 10 lists, which means Albany has most considerable situation - with both high percentage and amount of admissions.
+
+
+
+## 6:
+
+```{r}
+Rehab <- admissions_data %>% 
+  filter( str_detect( service_type, '[r|R]ehab'))
+
+Rehab %>% 
+  group_by( age_group, primary_substance_group) %>% 
+  summarise( most_prominent = sum(admissions)) %>% 
+  arrange( desc(most_prominent), .by_group = T) %>% 
+  left_join(primary_substance_dict, c("primary_substance_group" = "substance_code")) %>% 
+  ggplot() +
+  geom_bar( mapping = aes( x = primary_substance_group.y, y = most_prominent,
+                           fill = primary_substance_group.y), stat = 'identity') +
+  facet_wrap( vars(age_group)) +
+  labs( x = "Primary substance group", y = "Admissions", 
+        title = "Accumulated Primary Substances Admissions in Each Age Group 
+        in New York State from 2007 to 2020.") +
+  theme( axis.text.x = element_blank())
+```
+
+Marijuana posses overwhelming position for people under 18 years old. Alcohol is the No.1 admission for 35 and older people, and second place for 25 to 34 people. Cocaine, Heroin and Alcohol admissions increases with ages increasing and falls when people elder than 55. Another thing to notice is the ratio of Alcohol increases as people getting elder.Heroin admissions are most common for 25 to 34 years old, Cocaine admissions are most common for 45 to 54 years old people. Other Opioids, and all others admissions are pretty rare comparing to other four major substances. 
+
+### Plotting maximum values in each age group separately.
+
+```{r}
+max_sub <- Rehab %>% 
+    group_by( age_group, primary_substance_group) %>% 
+    summarise( total = sum(admissions)) %>% 
+    arrange( desc(total), .by_group = T)
+
+max_sub[seq(1,length(max_sub$total),6), ] %>% 
+    left_join(primary_substance_dict, c("primary_substance_group" = "substance_code")) %>% 
+    ggplot() +
+    geom_col( mapping = aes(x = age_group, y = total, fill = primary_substance_group.y)) +
+    labs( x = "Age group", y = "Total Admissions", 
+          title = "Maximum Primary Substance Accumulated Admissions Among Age Groups")
+```
+
+
+## 7:
+
+```{r}
+set.seed(2)
+Rehab.county <- unique(Rehab$county_of_program_location)
+counties_to_show <- Rehab.county[ sample(1:length(Rehab.county), 3)]
+
+counties_title <- sapply(counties_to_show, function(x) {
+  county_dict$county_name[which(county_dict == x)]
+}) %>% 
+  paste(collapse = ' and ')
+
+Rehab %>% 
+  filter( county_of_program_location %in% counties_to_show) %>% 
+  group_by( year, primary_substance_group, county_of_program_location) %>% 
+  summarise( Total_adm = sum(admissions)) %>% 
+  left_join(primary_substance_dict, c("primary_substance_group" = "substance_code")) %>% 
+  left_join(county_dict, c("county_of_program_location" = "county_code")) %>% 
+  ggplot() +
+  geom_line( mapping = aes( x = year, y = Total_adm, color = primary_substance_group.y)) +
+  facet_wrap( vars(county_name)) +
+  labs( x = "Year", y = "Admissions", 
+        title = paste(counties_title, "Annual Admissions", collapse = ' '))
+  
+```
+
+One thing to notice here is some Rehab facilities don't have full time records from 2007 to 2020. Therefore, I only select three city randomly with full time records. And in these three graphs we can see that Chemung County has lowest admission amounts, with no significant changes among time, and Alcohol is the most admission substances. On the other hand, Monroe and Onondaga have both similar amounts of admissions and trends over time. Alcohol and Cocaine reducing recently, while Heroin increased significantly over 2010 to 2017. However, this comparison is not so persuasive since we also need to consider the change of population in that County. Therefore, like previous analysis, I compared the admissions over County population each year, then look at the changes of these three Counties.
+
+```{r}
+ny_pop_clean <- ny_pop %>% 
+  select( -c(fips_code, program_type)) %>% 
+  filter( !year == 2006) %>% 
+  filter( !str_detect(geography, "State")) %>% 
+  mutate( county_name = str_remove(geography, " County")) %>% 
+  select( -geography)
+
+ny_pop_clean$county_name[ which( ny_pop_clean$county_name == "New York")] <- "New York (City)"
+
+Rehab %>% 
+  filter( county_of_program_location %in% counties_to_show) %>% 
+  group_by( year, primary_substance_group, county_of_program_location) %>% 
+  summarise( Total_adm = sum(admissions)) %>% 
+  left_join(primary_substance_dict, c("primary_substance_group" = "substance_code")) %>% 
+  left_join(county_dict, c("county_of_program_location" = "county_code")) %>% 
+  inner_join(ny_pop_clean, c("county_name" = "county_name", "year" = "year")) %>% 
+  mutate( adm_percentage = Total_adm / population * 100) %>% 
+  ggplot() +
+  geom_line( mapping = aes( x = year, y = adm_percentage, color = primary_substance_group.y)) +
+  facet_wrap( vars(county_name)) +
+  labs( x = "Year", y = "Admissions over population (%)", 
+        title = paste(counties_title, "Annual Admissions 
+                      Percentage Among Population", collapse = ' '))
+```
+
+The admissions percentage over population of these three counties are as similar as figure above we can see. These similar percentages over counties can't be interpreted from previous figures since the total population over different counties and years are different. This analysis is more rigorous in population ratio perspective, and in fact the admissions percentages don't vary too much.
+
+

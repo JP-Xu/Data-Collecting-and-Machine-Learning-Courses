@@ -1,0 +1,151 @@
+---
+title: "DA5020.A3.Jiaming.Xu"
+author: "Jiaming Xu"
+date: "1/31/2022"
+output: html_document
+---
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+## Q1:
+
+I experienced importing issues as tibble that as_tibble couldn't recognize negative floats as numeric. Since there are several inconsistent nomenclature between dataset and data dictionary, it's not easy to really determine what's the correct type. But for "store_and_fwd_flag" variable, it's values should be logical but it's character as default by tibble. Therefore we need to convert it to logical if we need to use that variable. Others are correct.
+
+For missing data, I calculate the missing frequency for each variable, and plot them as barplot for easy visualization. In fact there are several variables contain missing values. Surprisingly, ehail_fee variable is empty, no data in this column! We do want to delete it if we won't modify it in the future analysis. 
+
+```{r}
+tripdata_df <- read_csv("https://s3.amazonaws.com/nyc-tlc/trip+data/green_tripdata_2020-02.csv")
+print("Dimensions of trip dataset:")
+dim(tripdata_df)
+print("Missing values percentage in each variable:")
+tripdata_df_missing <- sapply(tripdata_df, function(x) sum( is.na(x))) / dim(tripdata_df)[1]
+tibble( names = names(tripdata_df_missing), missing_freq = tripdata_df_missing) %>% 
+    ggplot() +
+    geom_bar( mapping = aes( x = names, y = missing_freq),
+              stat = "identity") +
+    coord_flip()
+```
+
+## Q2:
+
+column names are inconsistent. For example, "Passenger_count" in data dictionary but "passenger_count" in dataset. Also, column "congestion_surcharge" is not in data dictionary. There are 18 variables in data dictionary but 19 in the dataset.
+
+Pick up date and drop off date both are not in 2020 Febuary shows in the console output below. There are several observations in Jan or Mar on 2020 and one in Jan on 2009.
+
+```{r pressure, echo=FALSE}
+tripdata_df %>% 
+    mutate( pick_up_month = format( as.Date( lpep_pickup_datetime), "%Y-%b")) %>% 
+    mutate( drop_off_month = format( as.Date( lpep_dropoff_datetime), "%Y-%b")) %>% 
+    filter( drop_off_month != "2020-Feb" & pick_up_month != "2020-Feb")
+```
+
+Examine if there are abnormal values in the "RateCodeID" column, we can see there is code 99 in the column, but should be only 1 to 6 in the data dictionary. Therefore any values with code 99 should be removed or defined.
+
+```{r}
+tripdata_df %>% 
+    pull( RatecodeID) %>% 
+    unique()
+```
+
+There are also several observations with negative total_amount, the total amount charged to passengers. Does not include cash tips, which are abnormal.
+
+```{r}
+tripdata_df %>% 
+    filter( 0 > total_amount) %>% 
+    select( VendorID, passenger_count, total_amount)
+```
+
+Also, there's no value in ehail_fee column, we should drop it for analysis.
+
+```{r}
+sum(!is.na(tripdata_df$ehail_fee))
+```
+
+
+## Q3:
+
+The histogram plot shows only one visible bar with more than 30k data, therefore the data is highly skewed. This means there are several very long trip distance in this dataset. Take logarithm 10 to trip_distance for a better visualization, it looks like the normal distribution, but the x axis is actually based on log10. I also list first 20 longest trip distance in this dataset, 10 trip distances longer than 10k.
+
+```{r}
+tripdata_df %>% 
+    select( trip_distance) %>% 
+    drop_na() %>% 
+    ggplot() +
+        geom_histogram( mapping = aes( trip_distance))
+```
+
+Now plot distribution excluding outliers (defined as z score > 30). We can see here, the distribution is skewed to the left.
+
+```{r}
+tripdata_df %>% 
+    mutate( z = (trip_distance - mean(trip_distance) / sd(trip_distance))) %>%
+    filter( abs(z) < 30) %>% 
+    select( trip_distance) %>% 
+    ggplot() +
+        geom_histogram( mapping = aes( trip_distance))
+```
+
+```{r}
+sort( tripdata_df$trip_distance, decreasing = TRUE) [1:20]
+
+tripdata_df %>% 
+    select( trip_distance) %>% 
+    drop_na() %>% 
+    ggplot() +
+        geom_histogram( mapping = aes( log10(trip_distance)))
+```
+
+## Q4:
+
+The average tips amount is 0.986, nearly one dollor per ride. The average trip distance of these outliers is 10.72092, which more than twice than non-outliers, 4.854625. It's possible that longer distance passengers are more generous. These outliers are
+
+```{r}
+tripdata_outliers <- tripdata_df %>% 
+    mutate( z = ((tip_amount - mean(tip_amount)) / sd(tip_amount))) %>% 
+    filter( abs(z) > 3)
+
+tripdata_tip_clean <- tripdata_df %>% 
+    mutate( z = ((tip_amount - mean(tip_amount)) / sd(tip_amount))) %>% 
+    filter( abs(z) <= 3)
+
+tripdata_tip_clean
+
+```
+
+## Q5:
+
+I made boxplot to visualize the relationship between payment method and tips amount. In the figure below we can see credit card users generally paid more tips than other payment methods.
+
+```{r}
+payment_type_dict = c("Credit Card", "Cash", "No Charge", "Dispute", "Unknown", "Voided Trip")
+tripdata_tip_clean %>% 
+    mutate( payment_type_str = sapply(tripdata_tip_clean $payment_type,
+                                      function(i) payment_type_dict[i])) %>% 
+    select( payment_type_str, tip_amount) %>% 
+    drop_na() %>% 
+    ggplot( ) +
+    geom_boxplot( mapping = aes( y = tip_amount, x = payment_type_str, 
+                                 fill = payment_type_str)) +
+    labs( x = "Payment Method", y = "Tips Amount (dollors)", 
+          title = "Boxplot of Tips Amount verses Payment Method for Taxi.")
+```
+
+## Q6:
+
+passenger number, rate code id, store and fwd flag, payment type, trip type, congestion surcharge have missing data. All of them are categorical variables. There are two methods:
+(1) use the most common type of each categorical variable to replace missing data.
+(2) make prediction
+(3) ignore these observations.
+
+For numerical variables, we can use either:
+(1) make prediction
+(2) general average
+(3) average in category
+(4) ignore these overvations
+to replace missing values.
+
+
+

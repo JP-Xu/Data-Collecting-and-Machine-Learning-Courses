@@ -1,0 +1,156 @@
+---
+title: "Assignment 7"
+author: "Jiaming Xu"
+output:
+  html_document:
+    df_print: paged
+---
+
+# Problem 1:
+
+## 1:
+
+```{r, message=FALSE}
+library(httr)
+library(rvest)
+library(tidyverse)
+```
+
+xpath used for nodes navigation. There are two tables in this html, I located the first one by defind data-sort-type="text" which appears only in the first table. Then navigated to parent node twice, then convert it to table.
+
+Clean references and percentage symbol.
+
+```{r}
+url = "https://en.wikipedia.org/wiki/List_of_countries_by_percentage_of_population_living_in_poverty"
+html_raw_data <- read_html(url)
+df <- html_raw_data %>% 
+    html_nodes(xpath = '//table//th[@data-sort-type="text"]/../..') %>% 
+    html_table()
+df <- df[[1]] %>% as_tibble()
+
+df_clean <- df %>% 
+    rename_with(~ gsub("\\[\\d+?\\]", "", .x)) %>% 
+    mutate(`< $1.90` = str_remove_all(`< $1.90`, "%")) %>% 
+    mutate(`< $3.20` = str_remove_all(`< $3.20`, "%")) %>% 
+    mutate(`< $5.50` = str_remove_all(`< $5.50`, "%")) %>% 
+    mutate(`< $1.90` = str_remove_all(`< $1.90`, '\\[\\d+?\\]')) %>% 
+    mutate(`< $3.20` = str_remove_all(`< $3.20`, '\\[\\d+?\\]')) %>% 
+    mutate(`< $5.50` = str_remove_all(`< $5.50`, '\\[\\d+?\\]')) %>% 
+    type_convert()
+
+glimpse(df_clean)
+```
+
+## 2:
+
+Ascending order is: Europe, Asia,Europe, South America, North America, Asia, Oceania, and Africa.
+
+In general, only 5% people in Europe are living with less than $5.50 a day, with standard deviation 9. Asia,Europe countries have similar percentage, about 6.85%, but less deviation, only 4.5%.
+
+Asia is the most unbalanced continent, followed by Oceania, Africa, and North America. This means wealthy and poor counties have big differences.
+
+```{r}
+df_clean %>% 
+    group_by(Continent) %>% 
+    summarise( mean= mean(`< $5.50`),
+               sd = sd(`< $5.50`)  ) %>% 
+    arrange(mean) %>% 
+    ggplot(aes(x = Continent, y = mean)) +
+        geom_bar(stat = 'identity', fill='white', color='black') +
+        geom_errorbar(aes(ymin=mean-sd, ymax=mean+sd), width=.2,
+                      position = position_dodge(0.9))
+```
+
+## 3:
+
+From graph below we can see, 9 out of top 10 poor country are from Africa, one from Asia. Madagascar has 98% people living under $5.5 a day, the highest percentage on the Earth.
+
+```{r}
+df_clean %>% 
+    arrange(desc(`< $5.50`)) %>% 
+    slice(1:10) %>% 
+    ggplot(aes(x = reorder(Country, -`< $5.50`), y = `< $5.50`, fill = Continent)) +
+        geom_bar(stat = 'identity') +
+        coord_flip() +
+        labs( y = "Percentage of People living less than $5.50 a day",
+              x = "Country") +
+        geom_text(aes(label = `< $5.50`)) +
+        theme_minimal()
+
+```
+
+## 4:
+
+```{r}
+df_clean %>% 
+    arrange((`< $5.50`)) %>% 
+    slice(1:5) %>% 
+    ggplot(aes(x = reorder(Country, -`< $5.50`), y = `< $5.50`, fill = Continent)) +
+        geom_bar(stat = 'identity') +
+        labs( y = "Percentage of People living less than $5.50 a day",
+              x = "Country") +
+        geom_text(aes(label = `< $5.50`))
+
+df_clean %>% 
+    filter((`< $3.20` < 0.2)) %>% 
+    count( Continent)
+
+df_clean %>% 
+    filter((`< $1.90` < 0.2)) %>% 
+    count( Continent)
+```
+
+We see all top 5 countries with lowest percentage of living expenses smaller than $5.50 a day are from Europe, which shows European countries provide high welfare for their people. Of course, this is the consequence of Industrial Revolutions and triangle trade.
+
+I chose 0.2 as the threshold for \$3.20 and \$1.90 analysis. There are 3 countries in Asia and 9 countries in Europe which only 0.2 % of their people living less than \$3.20. For \$1.90 expenses a day, there are 8 countries in Asia, 1 country in Asia-Europe, 16 countries in Europe and only one country in south America have less than 0.2% people living with less than \$1.90. No country in Africa lists above.
+
+## 5:
+
+Graph is shown below.
+
+
+```{r}
+df_clean %>% 
+  filter( Continent == c("Asia", "North America")) %>% 
+  pivot_longer( c(`< $1.90`,`< $3.20`,`< $5.50`), names_to = "income", values_to = "percentage") %>% 
+  ggplot() +
+    geom_boxplot( mapping = aes( x = Continent, y = percentage )) +
+    facet_wrap( vars( income)) 
+
+```
+
+
+First impression is only Asia countries have outliers for 1.90 and 3.20 variables.
+
+For living expenses less than \$1.90, Asia countries have less average percentage than North America. Percentages in both Continents are positive-skewed (mean larger than median).
+
+```{r}
+df_clean %>% 
+ filter( Continent == 'Asia') %>% 
+ arrange(desc(`< $1.90`)) %>% 
+ slice(1:5)
+```
+
+Turkmenistan, East Timor, and Yemen are three outliers for \$1.90 in Asia. Therefore general speaking, people in Asia have smaller percentage of living expenses less than \$1.90 than North America.
+
+For \$3.20, median of Asian and North American countries are quite close. Asian countries have smaller 25% - 75% range, but several outliers which North America doesn't have.
+
+```{r}
+df_clean %>% 
+ filter( Continent == 'Asia') %>% 
+ arrange(desc(`< $3.20`)) %>% 
+ slice(1:6)
+```
+
+Outliers of \$3.20 are East Timor, India, Bangladesh, Yemen, Nepal, and Turkmenistan.
+
+For \$5.50, North America does better than Asian with smaller median percentage, smaller percentage range, but 25% quantile are larger than Asian.
+
+
+
+
+
+
+
+
+
