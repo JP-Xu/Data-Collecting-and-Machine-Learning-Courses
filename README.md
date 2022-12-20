@@ -8,6 +8,22 @@ Studies how to build large-scale information repositories of different types of 
 
 Discusses several basic learning algorithms, such as regression and decision trees, along with popular data types, implementation and execution, and analysis of results. Lays the data analytics program foundation of how learning models from data work, both algorithmically and practically. The coding can be done in R, Matlab or Python. Students must demonstrate ability to set up data for learning, training, testing, and evaluating.
 
+## Topics covered in Detail
+
+ - Introduction & Essential Concepts Data Mining & CRISP-DM
+ - Descriptive and Predictive Analytics
+ - Classification through Lazy Learning with kNN
+ - Classification through Naive Bayes
+ - Classification through Decision Trees & Rules
+ - Multiple & Logistic Regression (Break)
+ - Artificial Neural Networks and Deep Learning
+ - Support Vector Machines
+ - Cluster Discovery
+ - Association Rules Discovery
+ - Evaluation of Models
+ - Stacked and Ensemble Models
+ - Performance Analysis
+
 ### Northeastern University Data Analytics Certificates
 
 These two courses are part of Northeastern University Data Analytics Certificate, taught in R.
